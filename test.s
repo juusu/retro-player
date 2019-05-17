@@ -9,8 +9,8 @@ waitras1:
 	move.l   $dff004,d0
     and.l    #$1ff00,d0
     cmp.l    #88<<8,d0
-	bne 	waitras1
-	move.w	#$fff,$dff180
+	bne 	 waitras1
+	move.w 	#$fff,$dff180
 
 	jsr		rc_Music	
 

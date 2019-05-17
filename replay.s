@@ -43,6 +43,8 @@ rc_Init:
 .sampleLoopEnd:
         move.l     a0,rc_SampleStart                           ;store sample pointer
 
+        move.w     #$F,rc_DmaBits
+
 .endInit:
         rts
         
@@ -54,87 +56,22 @@ rc_Music:
         move.l     rc_SampleOffsetTable,a3
         move.l     rc_SampleStart,a4
 
-	; stop DMA if needed for each channel
-        moveq      #0,d0                                       ;loop for all channels
-        move.b     rc_NumChannels,d0
-        moveq      #0,d1                                       ;dma bits
-.nextDMABit:
-        tst.b      (rc_Ch0_StopDMA-rc_Ch0)(a1)                 ;should we stop DMA for this channel?					
-        beq        .no
-        bset       d0,d1
-.no
-        adda.l     #rc_Ch1-rc_Ch0,a1
-        dbf        d0,.nextDMABit
+	move.w     rc_DmaBits,d6
+        move.w     d6,dmacon(a0)                               ;stop DMA for selected channels
 
-        move.w     d1,dmacon(a0)                               ;stop DMA for selected channels
-
-        move.w     #$f00,$dff180
-   	; TODO: wait 7 rasterlines here
-        move.l     #300,d2
-.waitDMA:
-        sub.w      #1,d2
-        bne        .waitDMA
-
-
-   	; poke Paula for all channels 
-        lea        rc_Ch0,a1                                   ;channel structure pointer into A1
-        moveq      #0,d0                                       ;loop for all channels
-        move.b     rc_NumChannels,d0
-
-.pokePaula:
-        move.b     (a2,d0),d3                                  ;(we go last to first)
-
-        tst.b      (rc_Ch0_StopDMA-rc_Ch0)(a1)                 ;if we needed to stop DMA then poke the ptrs too					
-        beq        .noPokePtrs
-        move.l     rc_Ch0_PTR-rc_Ch0(a1),ac_ptr(a0,d3)         ;poke ac_ptr
-        move.w     rc_Ch0_LEN-rc_Ch0(a1),ac_len(a0,d3)         ;poke ac_len
-        clr.b      rc_Ch0_StopDMA-rc_Ch0(a1)                   ;make sure that we don't reset DMA next time
-.noPokePtrs
-        move.w     rc_Ch0_PER-rc_Ch0(a1),ac_per(a0,d3)         ;poke ac_per
-        move.w     rc_Ch0_VOL-rc_Ch0(a1),ac_vol(a0,d3)         ;poke ac_vol
-
-        adda.l     #rc_Ch1-rc_Ch0,a1                           ;next channel structure
-
-        dbf        d0,.pokePaula
-
-	; re-enable audio DMA
-        or.w       #$8000,d1
-        move.w     d1,dmacon(a0)
-
-          	; TODO: wait 7 rasterlines here
-        move.l     #300,d2
-.waitDMA2:
-        sub.w      #1,d2
-        bne        .waitDMA2
-
-        move.w     #$fff,$dff180
-
-	; re-poke the sample pointers for looped sounds
-        lea        rc_Ch0,a1                                   ;channel structure pointer into A1   
-        moveq      #0,d0                                       ;loop for all channels
-        move.b     rc_NumChannels,d0
-
-.rePokePaula:
-        move.b     (a2,d0),d1                                  ;a2 has ptr to audiooffsets,(we go last to first)
-
-        move.l     rc_Ch0_PTR_loop-rc_Ch0(a1),ac_ptr(a0,d1)    ;always repoke lthe pointers so we can do wavetable stuff
-                                                               ;replay code makes sure this doesn't change if not needes, so we can safely do this
- 
-        move.w     rc_Ch0_LEN_loop-rc_Ch0(a1),ac_len(a0,d1)    ;poke ac_len
-        adda.l     #rc_Ch1-rc_Ch0,a1                           ;next channel structure
-
-        dbf        d0,.rePokePaula 
+        ; store current raster position for later
+        move.w     vhposr(a0),d5
+        add.w      #$0780,d5
 
 .readNotes:
-        lea        rc_Ch0,a1                            t       ;channel structure pointer into A1
         moveq      #0,d0                                       ;loop for all channels
-
         move.b     rc_NumChannels,d0
 
+        moveq      #0,d4                                        ;init DMA bits
 .loop:
-        move.l     rc_Ch0_DataPtr-rc_Ch0(a1),a0                 ;get current note pointer
+        move.l     rc_Ch0_DataPtr-rc_Ch0(a1),a6                 ;get current note pointer
 .getNextNote:
-        move.l     (a0)+,d1                                     ;read current note into D1
+        move.l     (a6)+,d1                                     ;read current note into D1
         cmpi.l     #$c0000000,d1                                ;check for control words
         bhi        .controlWord
 
@@ -144,14 +81,15 @@ rc_Music:
         and.w      #$7F,d2                                      ;mask unnecessary bits
         move.w     d2,rc_Ch0_VOL-rc_Ch0(a1)     	        ;store the volume
 
+        btst       #23,d1
+        beq        .noStopDma
+        bset       d0,d4                                        ;store that we need to stop DMA in order to trigger a new note
+.noStopDma:
+
         btst       #24,d1                                       ;check format of instruction
         beq        .noNewNote
 
 .newNote
-        btst       #23,d1
-        beq        .noStopDma
-        move.b     #1,rc_Ch0_StopDMA-rc_Ch0(a1)                 ;store that we need to stop DMA in order to trigger a new note
-.noStopDma:
         move.l     d1,d2
         moveq      #10,d3                                       ;d3 is shift amount (greater than 7 can't use immediate addressing)
         ror.l      d3,d2                                        ;d3 is free now
@@ -177,11 +115,10 @@ rc_Music:
         bra        .nextChannel
 
 .noNewNote:
-
         ;process sample offset
         move.l     d1,d2
         ror.l      #8,d2        
-        and.l      #$ffff,d2      
+        and.l      #$7fff,d2      
         beq        .noPointerChange2
 
         move.l     (rc_Ch0_PTR_loop-rc_Ch0)(a1),d3              ;get old pointer value
@@ -199,11 +136,12 @@ rc_Music:
 
 .noPeriodChange
 .nextChannel:
-        move.l     a0,rc_Ch0_DataPtr-rc_Ch0(a1)                 ;store current channel note pointer
+        move.l     a6,rc_Ch0_DataPtr-rc_Ch0(a1)                 ;store current channel note pointer
         adda.l     #rc_Ch1-rc_Ch0,a1                            ;next channel structure
         dbf        d0,.loop
-        
-        rts                                                     ;all done!
+
+        move.w     d4,rc_DmaBits                                ;store DMA stop flags for next tick
+        bra        .rc_Music2
 
 .controlWord:
         cmpi.l  #$ffffffff,d1                                   ;is it the end of channel data?
@@ -212,11 +150,72 @@ rc_Music:
         bra     .getNextNote
 .channelEnd:
 ; go back to beginning of channel data
-        move.l  rc_Ch0_DataStart-rc_Ch0(a1),a0
+        move.l  rc_Ch0_DataStart-rc_Ch0(a1),a6
         bra     .getNextNote
 
+.rc_Music2:
+; DMA wait start
+        move.w     #$f00,$180(a0)
+
+rasterWait1:
+        cmp.w      vhposr(a0),d5
+        bgt        rasterWait1      
+
+        move.w     #$fff,$180(a0)
+   	; poke Paula for all channels 
+        lea        rc_Ch0,a1                                   ;channel structure pointer into A1
+        moveq      #0,d0                                       ;loop for all channels
+        move.b     rc_NumChannels,d0
+
+.pokePaula:
+        move.b     (a2,d0),d3                                  ;(we go last to first)
+
+        btst       d0,d6				
+        beq        .noPokePtrs
+        move.l     rc_Ch0_PTR-rc_Ch0(a1),ac_ptr(a0,d3)         ;poke ac_ptr
+        move.w     rc_Ch0_LEN-rc_Ch0(a1),ac_len(a0,d3)         ;poke ac_len
+.noPokePtrs
+        move.w     rc_Ch0_PER-rc_Ch0(a1),ac_per(a0,d3)         ;poke ac_per
+        move.w     rc_Ch0_VOL-rc_Ch0(a1),ac_vol(a0,d3)         ;poke ac_vol
+
+        adda.l     #rc_Ch1-rc_Ch0,a1                           ;next channel structure
+
+        dbf        d0,.pokePaula
+
+	; re-enable audio DMA
+        or.w       #$8000,d6
+        move.w     d6,dmacon(a0)
+
+        move.w     #$0f0,$180(a0)
+        ; wait 1.1 rasterlines here
+        move.w     vhposr(a0),d2
+        add.w      #$0110,d2
+rasterWait2:
+        cmp.w      vhposr(a0),d2
+        bgt        rasterWait2  
+
+        move.w     #$fff,$180(a0)
+
+	; re-poke the sample pointers for looped sounds
+        lea        rc_Ch0,a1                                   ;channel structure pointer into A1   
+        moveq      #0,d0                                       ;loop for all channels
+        move.b     rc_NumChannels,d0
+
+.rePokePaula:
+        move.b     (a2,d0),d1                                  ;a2 has ptr to audiooffsets,(we go last to first)
+
+        move.l     rc_Ch0_PTR_loop-rc_Ch0(a1),ac_ptr(a0,d1)    ;always repoke lthe pointers so we can do wavetable stuff
+                                                               ;replay code makes sure this doesn't change if not needes, so we can safely do this
+ 
+        move.w     rc_Ch0_LEN_loop-rc_Ch0(a1),ac_len(a0,d1)    ;poke ac_len
+        adda.l     #rc_Ch1-rc_Ch0,a1                           ;next channel structure
+
+        dbf        d0,.rePokePaula 
+        
+        rts                                                     ;all done!
+
 rc_StopMusic:
-	lea		_custom,a0
+	lea     _custom,a0
 	move.w	#$000f,dmacon(a0)
 	rts
         
@@ -227,6 +226,9 @@ rc_NumChannels:
         dc.b       0
 
         EVEN
+
+rc_DmaBits:
+        dc.w       0
 
 rc_SampleOffsetTable:
         dc.l       0        
@@ -243,9 +245,6 @@ rc_Ch0_DataStart:
         dc.l       0
 rc_Ch0_DataPtr:
         dc.l       0
-rc_Ch0_StopDMA:
-        dc.b       0
-        EVEN
 
 ; paula registers
 rc_Ch0_PTR:
@@ -261,14 +260,13 @@ rc_Ch0_PER:
 rc_Ch0_VOL:
         dc.w       0        
 
+        EVEN
+
 rc_Ch1:
 rc_Ch1_DataStart:
         dc.l       0
 rc_Ch1_DataPtr:
         dc.l       0       
-rc_Ch1_StopDMA:
-        dc.b       0  
-        EVEN
 
 ; paula registers
 rc_Ch1_PTR:
@@ -284,14 +282,13 @@ rc_Ch1_PER:
 rc_Ch1_VOL:
         dc.w       0
 
+        EVEN
+
 rc_Ch2:
 rc_Ch2_DataStart:
         dc.l       0
 rc_Ch2_DataPtr:
         dc.l       0
-rc_Ch2_StopDMA:
-        dc.b       0  
-        EVEN
 
 ; paula registers
 rc_Ch2_PTR:
@@ -307,14 +304,13 @@ rc_Ch2_PER:
 rc_Ch2_VOL:
         dc.w       0
 
+        EVEN
+
 rc_Ch3:
 rc_Ch3_DataStart:
         dc.l       0
 rc_Ch3_DataPtr:
         dc.w       0
-rc_Ch3_StopDMA:
-        dc.b       0  
-        EVEN
 
 ; paula registers
 rc_Ch3_PTR:
