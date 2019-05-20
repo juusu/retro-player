@@ -19,20 +19,23 @@ rc_Init:
         move.l     a0,rc_Ch0_DataPtr-rc_Ch0(a1)                ;also init the current note pointer to the same place
 
 .innerLoop:
-        cmp.l      #$ffffffff,(a0)+                            ;check if end of current channel data
+        cmp.w      #$ffff,(a0)+                                ;check if end of current channel data
+        addq.l     #2,a0
         bne        .innerLoop                                  ;no? read on ...
 
-        cmp.l      #$ffffffff,(a0)+                            ;check if this was the last channel ?
+        subq.l     #2,a0
+        cmp.w      #$ffff,(a0)+                                ;check if this was the last channel ?
         beq        .noteLoopEnd                                ;yeah, exit loop!
 
         adda.l     #rc_Ch1-rc_Ch0,a1                           ;no? next channel structure
         addq.b     #1,d0                                       ;moar channels
-        subq.l     #4,a0                                       ;rewind pointer one place b/c it wasn't a marker
+        subq.l     #2,a0                                       ;rewind pointer one place b/c it wasn't a marker
       
         bra        .loopStart            
 
 .noteLoopEnd:
         move.b     d0,rc_NumChannels                           ;store for later
+        move.w     (a0)+,rc_DmaBits                            ;get initial state of DMACON for this mod
         move.l     a0,rc_SampleOffsetTable                     ;store pointer to sample offset table
 
 .loop
@@ -42,8 +45,6 @@ rc_Init:
         bra        .loop
 .sampleLoopEnd:
         move.l     a0,rc_SampleStart                           ;store sample pointer
-
-        move.w     #$F,rc_DmaBits
 
 .endInit:
         rts
@@ -144,8 +145,8 @@ rc_Music:
         bra        .rc_Music2
 
 .controlWord:
-        cmpi.l  #$ffffffff,d1                                   ;is it the end of channel data?
-        beq     .channelEnd
+        cmpi.l  #$ffff0000,d1                                   ;is it the end of channel data?
+        bge     .channelEnd
         ; process control commands here
         bra     .getNextNote
 .channelEnd:
