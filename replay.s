@@ -167,17 +167,18 @@ rasterWait1:
         lea        rc_Ch0,a1                                   ;channel structure pointer into A1
         moveq      #0,d0                                       ;loop for all channels
         move.b     rc_NumChannels,d0
-
+        moveq      #0,d1
+        
 .pokePaula:
-        move.b     (a2,d0),d3                                  ;(we go last to first)
+        move.b     (a2,d0),d1                                  ;(we go last to first)
 
         btst       d0,d6				
         beq        .noPokePtrs
-        move.l     rc_Ch0_PTR-rc_Ch0(a1),ac_ptr(a0,d3)         ;poke ac_ptr
-        move.w     rc_Ch0_LEN-rc_Ch0(a1),ac_len(a0,d3)         ;poke ac_len
+        move.l     rc_Ch0_PTR-rc_Ch0(a1),ac_ptr(a0,d1)         ;poke ac_ptr
+        move.w     rc_Ch0_LEN-rc_Ch0(a1),ac_len(a0,d1)         ;poke ac_len
 .noPokePtrs
-        move.w     rc_Ch0_PER-rc_Ch0(a1),ac_per(a0,d3)         ;poke ac_per
-        move.w     rc_Ch0_VOL-rc_Ch0(a1),ac_vol(a0,d3)         ;poke ac_vol
+        move.w     rc_Ch0_PER-rc_Ch0(a1),ac_per(a0,d1)         ;poke ac_per
+        move.w     rc_Ch0_VOL-rc_Ch0(a1),ac_vol(a0,d1)         ;poke ac_vol
 
         adda.l     #rc_Ch1-rc_Ch0,a1                           ;next channel structure
 
