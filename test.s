@@ -20,7 +20,7 @@ waitras2:
     cmp.l    #88<<8,d0
 	beq		waitras2
 
-	move.w	#$aaa,$dff180
+	move.w	#$05a,$dff180
 
 	btst	#6,$bfe001
 	bne		waitras1
