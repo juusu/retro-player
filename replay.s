@@ -39,9 +39,9 @@ rc_Init:
         move.l     a0,rc_SampleOffsetTable                     ;store pointer to sample offset table
 
 .loop
-        cmp.w      #$ffff,(a0)
+        cmp.w      #$ffff,(a0)+
         beq        .sampleLoopEnd
-        add.l      #OFFSET_TABLE_SIZE,a0
+        add.l      #OFFSET_TABLE_SIZE-2,a0
         bra        .loop
 .sampleLoopEnd:
         move.l     a0,rc_SampleStart                           ;store sample pointer
