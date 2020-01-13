@@ -43,7 +43,25 @@ rc_Init:
         beq        .sampleLoopEnd
         add.l      #OFFSET_TABLE_SIZE-2,a0
         bra        .loop
+
 .sampleLoopEnd:
+        ;d0 still has number of channels, no need to load
+        lea        rc_Ch0,a1                                   ;go back from 1st channel        
+.bufferLoop
+        moveq      #0,d1
+        move.w     (a0),d1                                     ;buffer length
+        sne        rc_Compress                                 ;set compression used flag if either buffer length is non-zero
+        beq        .endInit                                    ;but if it's zero skip the rest ...
+
+        move.l     a0,rc_Ch0_BufferStart-rc_Ch0(a1)            ;store buffer start
+        move.l     a0,rc_Ch0_BufferWritePtr-rc_Ch0(a1)         ;store buffer write pointer
+        asl        #2,d1                                       ;length is in longwords - convert to bytes
+        adda.l     d1,a0                                       ;calculate next channel's buffer location
+        move.l     a0,rc_Ch0_BufferEnd-rc_Ch0(a1)              ;store buffer end
+
+        adda.l     #rc_Ch1-rc_Ch0,a1                           ;next channel structure
+        dbf        d0,.bufferLoop
+
         move.l     a0,rc_SampleStart                           ;store sample pointer
 
 .endInit:
@@ -70,12 +88,42 @@ rc_Music:
 
         moveq      #0,d4                                        ;init DMA bits
 .loop:
-        move.l     rc_Ch0_DataPtr-rc_Ch0(a1),a6                 ;get current note pointer
+
 .getNextNote:
+        ; TODO: check if we're reading from the buffer here ?
+        ; if so, read from buffer, decrease count
+        ; else:
+        tst.w      rc_Ch0_ReadLength-rc_Ch0(a1)                 ;do we have bytes to read from the buffer still?
+        beq        .notLookBack                                 ;no, read new note
+        
+        move.l     rc_Ch0_BufferReadPtr-rc_Ch0(a1),a6            ;current buffer read ptr
+        cmp.l      a6,rc_Ch0_BufferEnd-rc_Ch0(a1)               ;check if we need to wrap around
+        bne        .noWrap       
+       
+        move.l     rc_Ch0_BufferStart-rc_Ch0(a1),a6             ;wrap back around to the beginning of the buffer
+
+        
+.notLookBack:
+        move.l     rc_Ch0_DataPtr-rc_Ch0(a1),a6                 ;get current note pointer
         move.l     (a6)+,d1                                     ;read current note into D1
+.wasLookBack:
         cmpi.l     #$c0000000,d1                                ;check for control words
         bhi        .controlWord
 
+        ; store note into decompression buffer
+        tst.b      rc_Compress                                  ;but only if the mod is actually compressed
+        beq        .processVolume
+
+        move.l     rc_Ch0_BufferWritePtr-rc_Ch0(a1),a5          ;read the buffer write pointer
+        cmp.l      a5,rc_Ch0_BufferEnd-rc_Ch0(a1)               ;check if we need to wrap around
+        bne        .noWrap
+
+        move.l     rc_Ch0_BufferStart-rc_Ch0(a1),a5             ;wrap back around to the beginning of the buffer
+.noWrap:
+        move.l     d1,(a5)+                                     ;store the current note into the buffer
+        move.l     a5,rc_Ch0_BufferWritePtr-rc_Ch0(a1)          ;store the buffer write pointer
+
+.processVolume
         ;process volume
         move.l     d1,d2                                        ;transfer to d2 to extract volume
         rol.l      #7,d2                                        ;rotate to beginning of register
@@ -226,7 +274,8 @@ rc_StopMusic:
 ;
 rc_NumChannels:
         dc.b       0
-
+rc_Compress:
+        dc.b       0
         EVEN
 
 rc_DmaBits:
@@ -247,6 +296,18 @@ rc_Ch0_DataStart:
         dc.l       0
 rc_Ch0_DataPtr:
         dc.l       0
+
+; decompression pointers
+rc_Ch0_BufferStart:
+        dc.l       0
+rc_Ch0_BufferEnd:
+        dc.l       0
+rc_Ch0_BufferReadPtr:
+        dc.l       0
+rc_Ch0_BufferWritePtr:
+        dc.l       0
+rc_Ch0_ReadLength:
+        dc.w       0
 
 ; paula registers
 rc_Ch0_PTR:
@@ -270,6 +331,18 @@ rc_Ch1_DataStart:
 rc_Ch1_DataPtr:
         dc.l       0       
 
+; decompression pointers
+rc_Ch1_BufferStart:
+        dc.l       0
+rc_Ch1_BufferEnd:
+        dc.l       0
+rc_Ch1_BufferReadPtr:
+        dc.l       0
+rc_Ch1_BufferWritePtr:
+        dc.l       0
+rc_Ch1_ReadLength:
+        dc.w       0
+
 ; paula registers
 rc_Ch1_PTR:
         dc.l       0
@@ -292,6 +365,18 @@ rc_Ch2_DataStart:
 rc_Ch2_DataPtr:
         dc.l       0
 
+; decompression pointers
+rc_Ch2_BufferStart:
+        dc.l       0
+rc_Ch2_BufferEnd:
+        dc.l       0
+rc_Ch2_BufferReadPtr:
+        dc.l       0
+rc_Ch2_BufferWritePtr:
+        dc.l       0
+rc_Ch2_ReadLength:
+        dc.w       0
+
 ; paula registers
 rc_Ch2_PTR:
         dc.l       0
@@ -312,6 +397,18 @@ rc_Ch3:
 rc_Ch3_DataStart:
         dc.l       0
 rc_Ch3_DataPtr:
+        dc.w       0
+
+; decompression pointers
+rc_Ch3_BufferStart:
+        dc.l       0
+rc_Ch3_BufferEnd:
+        dc.l       0
+rc_Ch3_BufferReadPtr:
+        dc.l       0
+rc_Ch3_BufferWritePtr:
+        dc.l       0
+rc_Ch3_ReadLength:
         dc.w       0
 
 ; paula registers
