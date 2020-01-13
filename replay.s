@@ -94,19 +94,11 @@ rc_Music:
         ; if so, read from buffer, decrease count
         ; else:
         tst.w      rc_Ch0_ReadLength-rc_Ch0(a1)                 ;do we have bytes to read from the buffer still?
-        beq        .notLookBack                                 ;no, read new note
-        
-        move.l     rc_Ch0_BufferReadPtr-rc_Ch0(a1),a6            ;current buffer read ptr
-        cmp.l      a6,rc_Ch0_BufferEnd-rc_Ch0(a1)               ;check if we need to wrap around
-        bne        .noWrap       
-       
-        move.l     rc_Ch0_BufferStart-rc_Ch0(a1),a6             ;wrap back around to the beginning of the buffer
+        bne        .lookBack                                    ;yes, do it!
 
-        
-.notLookBack:
         move.l     rc_Ch0_DataPtr-rc_Ch0(a1),a6                 ;get current note pointer
         move.l     (a6)+,d1                                     ;read current note into D1
-.wasLookBack:
+.parseNote:
         cmpi.l     #$c0000000,d1                                ;check for control words
         bhi        .controlWord
 
@@ -115,11 +107,11 @@ rc_Music:
         beq        .processVolume
 
         move.l     rc_Ch0_BufferWritePtr-rc_Ch0(a1),a5          ;read the buffer write pointer
-        cmp.l      a5,rc_Ch0_BufferEnd-rc_Ch0(a1)               ;check if we need to wrap around
-        bne        .noWrap
+        cmpa.l     rc_Ch0_BufferEnd-rc_Ch0(a1),a5               ;check if we need to wrap around
+        bne        .noWrap2
 
         move.l     rc_Ch0_BufferStart-rc_Ch0(a1),a5             ;wrap back around to the beginning of the buffer
-.noWrap:
+.noWrap2:
         move.l     d1,(a5)+                                     ;store the current note into the buffer
         move.l     a5,rc_Ch0_BufferWritePtr-rc_Ch0(a1)          ;store the buffer write pointer
 
@@ -201,6 +193,18 @@ rc_Music:
 ; go back to beginning of channel data
         move.l  rc_Ch0_DataStart-rc_Ch0(a1),a6
         bra     .getNextNote
+
+.lookBack:
+        move.l     rc_Ch0_BufferReadPtr-rc_Ch0(a1),a5           ;current buffer read ptr
+        cmpa.l     rc_Ch0_BufferEnd-rc_Ch0(a1),a5               ;check if we need to wrap around
+        bne        .noWrap       
+       
+        move.l     rc_Ch0_BufferStart-rc_Ch0(a1),a5             ;wrap back around to the beginning of the buffer
+.noWrap:
+        move.l     (a5)+,d1
+        subq.l     #1,rc_Ch0_ReadLength-rc_Ch0(a1)
+        move.l     a5,rc_Ch0_BufferReadPtr-rc_Ch0(a1)
+        bra        .parseNote
 
 .rc_Music2:
 ; DMA wait start

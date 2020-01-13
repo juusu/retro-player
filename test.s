@@ -9,17 +9,16 @@ waitras1:
 	move.l   $dff004,d0
     and.l    #$1ff00,d0
     cmp.l    #88<<8,d0
-	bne 	 waitras1
-	move.w 	#$fff,$dff180
-
-	jsr		rc_Music	
+	bge 	 waitras1
 
 waitras2:
 	move.l   $dff004,d0
     and.l    #$1ff00,d0
     cmp.l    #88<<8,d0
-	beq		waitras2
+	blo		 waitras2
 
+	move.w 	#$fff,$dff180
+	jsr		rc_Music	
 	move.w	#$05a,$dff180
 
 	btst	#6,$bfe001
