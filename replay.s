@@ -199,8 +199,8 @@ rc_Music:
         move.l     (rc_Ch0_BufferWritePtr-rc_Ch0)(a1),d1        ;get end of buffer
         sub.l      d2,d1
 
-        cmp.l      d1,(rc_Ch0_BufferStart-rc_Ch0)(a1)           ;check for wrap
-        blt        .wrapBuffer
+        cmp.l      (rc_Ch0_BufferStart-rc_Ch0)(a1),d1           ;check for wrap
+        bgt        .wrapBuffer
 
         move.l     d1,(rc_Ch0_BufferReadPtr-rc_Ch0)(a1)         ;store new read ptr
         bra        .getNextNote
