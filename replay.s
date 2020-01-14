@@ -236,7 +236,7 @@ rc_Music:
 
 .rasterWait1:
         cmp.w      vhposr(a0),d5
-        bgt        rasterWait1      
+        bgt        .rasterWait1      
 
         move.w     #$fff,$180(a0)
    	; poke Paula for all channels 
@@ -270,7 +270,7 @@ rc_Music:
         add.w      #$0110,d2
 .rasterWait2:
         cmp.w      vhposr(a0),d2
-        bgt        rasterWait2  
+        bgt        .rasterWait2  
 
         move.w     #$fff,$180(a0)
 
