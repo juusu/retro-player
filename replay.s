@@ -192,7 +192,7 @@ rc_Music:
         move.l     d1,d2
         and.w      #$7fff,d1                                    ;read length is in d1
         move.w     d1,(rc_Ch0_ReadLength-rc_Ch0)(a1)            ;store it
-        asl        d2
+        asl.l      #1,d2
         and.l      #$7fff0000,d2
         swap       d2                                           ;read offset is in d2
         asl        #2,d2                                        ;offset is in longwords
