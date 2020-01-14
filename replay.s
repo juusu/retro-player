@@ -90,19 +90,18 @@ rc_Music:
 .loop:
 
 .getNextNote:
-        ; TODO: check if we're reading from the buffer here ?
-        ; if so, read from buffer, decrease count
-        ; else:
         tst.w      rc_Ch0_ReadLength-rc_Ch0(a1)                 ;do we have bytes to read from the buffer still?
         bne        .lookBack                                    ;yes, do it!
 
         move.l     rc_Ch0_DataPtr-rc_Ch0(a1),a6                 ;get current note pointer
         move.l     (a6)+,d1                                     ;read current note into D1
-.parseNote:
         cmpi.l     #$c0000000,d1                                ;check for control words
         bhi        .controlWord
 
+        move.l     a6,rc_Ch0_DataPtr-rc_Ch0(a1)                 ;store current channel note pointer
+
         ; store note into decompression buffer
+.processNote:
         tst.b      rc_Compress                                  ;but only if the mod is actually compressed
         beq        .processVolume
 
@@ -177,7 +176,7 @@ rc_Music:
 
 .noPeriodChange
 .nextChannel:
-        move.l     a6,rc_Ch0_DataPtr-rc_Ch0(a1)                 ;store current channel note pointer
+
         adda.l     #rc_Ch1-rc_Ch0,a1                            ;next channel structure
         dbf        d0,.loop
 
@@ -187,8 +186,25 @@ rc_Music:
 .controlWord:
         cmpi.l  #$ffff0000,d1                                   ;is it the end of channel data?
         bge     .channelEnd
+        
         ; process control commands here
+        ; compression lookback only at this time
+        move.l  d1,d2
+        and.w   #$7fff,d1                                       ;read length is in d1
+        move.w  d1,(rc_Ch0_ReadLength-rc_Ch0)(a1)               ;store it
+        asl     d2
+        and.l   #$7fff0000,d2
+        swap    d2                                              ;read offset is in d2
+
+        move.l  (rc_Ch0_BufferWritePtr-rc_Ch0)(a1),d1           ;get end of buffer
+        sub.l   d2,d1
+
+        cmp.l   d1,(rc_Ch0_BufferStart-rc_Ch0)(a1)              ;check for wrap
+        blt     .wrapBuffer
+
+        move.l  d1,(rc_Ch0_BufferReadPtr-rc_Ch0)(a1)            ;store new read ptr
         bra     .getNextNote
+
 .channelEnd:
 ; go back to beginning of channel data
         move.l  rc_Ch0_DataStart-rc_Ch0(a1),a6
@@ -204,13 +220,20 @@ rc_Music:
         move.l     (a5)+,d1
         subq.l     #1,rc_Ch0_ReadLength-rc_Ch0(a1)
         move.l     a5,rc_Ch0_BufferReadPtr-rc_Ch0(a1)
-        bra        .parseNote
+        bra        .processNote
+
+.wrapBuffer:
+        sub.l      (rc_Ch0_BufferStart-rc_Ch0)(a1),d1
+        add.l      (rc_Ch0_BufferEnd-rc_Ch0)(a1),d1
+
+        move.l     d1,(rc_Ch0_BufferReadPtr-rc_Ch0)(a1)         ;store new read ptr
+        bra        .getNextNote
 
 .rc_Music2:
 ; DMA wait start
         move.w     #$f00,$180(a0)
 
-rasterWait1:
+.rasterWait1:
         cmp.w      vhposr(a0),d5
         bgt        rasterWait1      
 
@@ -244,7 +267,7 @@ rasterWait1:
         ; wait 1.1 rasterlines here
         move.w     vhposr(a0),d2
         add.w      #$0110,d2
-rasterWait2:
+.rasterWait2:
         cmp.w      vhposr(a0),d2
         bgt        rasterWait2  
 
