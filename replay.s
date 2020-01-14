@@ -195,6 +195,7 @@ rc_Music:
         asl        d2
         and.l      #$7fff0000,d2
         swap       d2                                           ;read offset is in d2
+        asl        #2,d2                                        ;offset is in longwords
 
         move.l     (rc_Ch0_BufferWritePtr-rc_Ch0)(a1),d1        ;get end of buffer
         sub.l      d2,d1
