@@ -219,7 +219,7 @@ rc_Music:
         move.l     rc_Ch0_BufferStart-rc_Ch0(a1),a5             ;wrap back around to the beginning of the buffer
 .noWrap:
         move.l     (a5)+,d1
-        subq.l     #1,rc_Ch0_ReadLength-rc_Ch0(a1)
+        subq.w     #1,rc_Ch0_ReadLength-rc_Ch0(a1)
         move.l     a5,rc_Ch0_BufferReadPtr-rc_Ch0(a1)
         bra        .processNote
 
