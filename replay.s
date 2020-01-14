@@ -184,31 +184,31 @@ rc_Music:
         bra        .rc_Music2
 
 .controlWord:
-        cmpi.l  #$ffff0000,d1                                   ;is it the end of channel data?
-        bge     .channelEnd
+        cmpi.l     #$ffff0000,d1                                ;is it the end of channel data?
+        bge        .channelEnd
         
         ; process control commands here
         ; compression lookback only at this time
-        move.l  d1,d2
-        and.w   #$7fff,d1                                       ;read length is in d1
-        move.w  d1,(rc_Ch0_ReadLength-rc_Ch0)(a1)               ;store it
-        asl     d2
-        and.l   #$7fff0000,d2
-        swap    d2                                              ;read offset is in d2
+        move.l     d1,d2
+        and.w      #$7fff,d1                                    ;read length is in d1
+        move.w     d1,(rc_Ch0_ReadLength-rc_Ch0)(a1)            ;store it
+        asl        d2
+        and.l      #$7fff0000,d2
+        swap       d2                                           ;read offset is in d2
 
-        move.l  (rc_Ch0_BufferWritePtr-rc_Ch0)(a1),d1           ;get end of buffer
-        sub.l   d2,d1
+        move.l     (rc_Ch0_BufferWritePtr-rc_Ch0)(a1),d1        ;get end of buffer
+        sub.l      d2,d1
 
-        cmp.l   d1,(rc_Ch0_BufferStart-rc_Ch0)(a1)              ;check for wrap
-        blt     .wrapBuffer
+        cmp.l      d1,(rc_Ch0_BufferStart-rc_Ch0)(a1)           ;check for wrap
+        blt        .wrapBuffer
 
-        move.l  d1,(rc_Ch0_BufferReadPtr-rc_Ch0)(a1)            ;store new read ptr
-        bra     .getNextNote
+        move.l     d1,(rc_Ch0_BufferReadPtr-rc_Ch0)(a1)         ;store new read ptr
+        bra        .getNextNote
 
 .channelEnd:
 ; go back to beginning of channel data
-        move.l  rc_Ch0_DataStart-rc_Ch0(a1),a6
-        bra     .getNextNote
+        move.l     rc_Ch0_DataStart-rc_Ch0(a1),a6
+        bra        .getNextNote
 
 .lookBack:
         move.l     rc_Ch0_BufferReadPtr-rc_Ch0(a1),a5           ;current buffer read ptr
