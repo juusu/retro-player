@@ -94,6 +94,7 @@ rc_Music:
         bne        .lookBack                                    ;yes, do it!
 
         move.l     rc_Ch0_DataPtr-rc_Ch0(a1),a6                 ;get current note pointer
+.readNote:
         move.l     (a6)+,d1                                     ;read current note into D1
         move.l     a6,rc_Ch0_DataPtr-rc_Ch0(a1)                 ;store current channel note pointer
         cmpi.l     #$c0000000,d1                                ;check for control words
@@ -208,7 +209,7 @@ rc_Music:
 .channelEnd:
 ; go back to beginning of channel data
         move.l     rc_Ch0_DataStart-rc_Ch0(a1),a6
-        bra        .getNextNote
+        bra        .readNote
 
 .lookBack:
         move.l     rc_Ch0_BufferReadPtr-rc_Ch0(a1),a5           ;current buffer read ptr
