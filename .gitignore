@@ -1,3 +1,5 @@
 /build/**
+/.vscode/**
+/fs-uae/**
 *.nmod
 *.code-workspace
