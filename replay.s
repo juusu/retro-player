@@ -95,10 +95,9 @@ rc_Music:
 
         move.l     rc_Ch0_DataPtr-rc_Ch0(a1),a6                 ;get current note pointer
         move.l     (a6)+,d1                                     ;read current note into D1
+        move.l     a6,rc_Ch0_DataPtr-rc_Ch0(a1)                 ;store current channel note pointer
         cmpi.l     #$c0000000,d1                                ;check for control words
         bhi        .controlWord
-
-        move.l     a6,rc_Ch0_DataPtr-rc_Ch0(a1)                 ;store current channel note pointer
 
         ; store note into decompression buffer
 .processNote:
@@ -201,7 +200,7 @@ rc_Music:
         sub.l      d2,d1
 
         cmp.l      (rc_Ch0_BufferStart-rc_Ch0)(a1),d1           ;check for wrap
-        bgt        .wrapBuffer
+        blt        .wrapBuffer
 
         move.l     d1,(rc_Ch0_BufferReadPtr-rc_Ch0)(a1)         ;store new read ptr
         bra        .getNextNote
