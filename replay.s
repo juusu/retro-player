@@ -12,6 +12,7 @@ OFFSET_TABLE_SIZE = 12
 
 ; put pointer to mod data in A0 and call init
 rc_Init:
+        movem.l    d0-d1/a1,-(sp)
         lea        rc_Ch0,a1                                   ;channel var pointer
         moveq      #0,d0                                       ;number of channels
 .loopStart:
@@ -65,10 +66,12 @@ rc_Init:
         move.l     a0,rc_SampleStart                           ;store sample pointer
 
 .endInit:
+        movem.l    (sp)+,d0-d1/a1
         rts
         
 ; main playroutine, call this every interrupt
 rc_Music:
+        movem.l    d0-d6/a0-a6,-(sp)
         lea        _custom,a0
         lea        rc_Ch0,a1                                   ;channel structure pointer into A1
         lea        rc_AudioOffsets,a2                          ;audio offset for the starting channel        
@@ -290,6 +293,7 @@ rc_Music:
 
         dbf        d0,.rePokePaula 
         
+        movem.l    (sp)+,d0-d6/a0-a6
         rts                                                     ;all done!
 
 rc_StopMusic:
