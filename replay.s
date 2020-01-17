@@ -12,8 +12,9 @@ OFFSET_TABLE_SIZE = 12
 
 ; put pointer to mod data in A0 and call init
 rc_Init:
-        movem.l    d0-d1/a1,-(sp)
-        lea        rc_Ch0,a1                                   ;channel var pointer
+        movem.l    d0-d1/a1-a2,-(sp)
+        lea        rc_Ch0(pc),a1                               ;channel var pointer
+        lea        rc_Vars(pc),a2                              ;var block pointer
         moveq      #0,d0                                       ;number of channels
 .loopStart:
         move.l     a0,rc_Ch0_DataStart-rc_Ch0(a1)              ;store beginning of ch0 pattern data
@@ -22,37 +23,37 @@ rc_Init:
 .innerLoop:
         cmp.w      #$ffff,(a0)+                                ;check if end of current channel data
         addq.l     #2,a0
-        bne        .innerLoop                                  ;no? read on ...
+        bne.s      .innerLoop                                  ;no? read on ...
 
         subq.l     #2,a0
         cmp.w      #$ffff,(a0)+                                ;check if this was the last channel ?
-        beq        .noteLoopEnd                                ;yeah, exit loop!
+        beq.s      .noteLoopEnd                                ;yeah, exit loop!
 
-        adda.l     #rc_Ch1-rc_Ch0,a1                           ;no? next channel structure
+        lea        rc_Ch1-rc_Ch0(a1),a1                           ;no? next channel structure
         addq.b     #1,d0                                       ;moar channels
         subq.l     #2,a0                                       ;rewind pointer one place b/c it wasn't a marker
       
-        bra        .loopStart            
+        bra.s      .loopStart            
 
 .noteLoopEnd:
-        move.b     d0,rc_NumChannels                           ;store for later
-        move.w     (a0)+,rc_DmaBits                            ;get initial state of DMACON for this mod
-        move.l     a0,rc_SampleOffsetTable                     ;store pointer to sample offset table
+        move.b     d0,rc_NumChannels-rc_Vars(a2)               ;store for later
+        move.w     (a0)+,rc_DmaBits-rc_Vars(a2)                ;get initial state of DMACON for this mod
+        move.l     a0,rc_SampleOffsetTable-rc_Vars(a2)         ;store pointer to sample offset table
 
 .loop
         cmp.w      #$ffff,(a0)+
-        beq        .sampleLoopEnd
-        add.l      #OFFSET_TABLE_SIZE-2,a0
-        bra        .loop
+        beq.s      .sampleLoopEnd
+        lea        OFFSET_TABLE_SIZE-2(a0),a0
+        bra.s      .loop
 
 .sampleLoopEnd:
         ;d0 still has number of channels, no need to load
-        lea        rc_Ch0,a1                                   ;go back from 1st channel        
+        lea        rc_Ch0(pc),a1                               ;go back from 1st channel        
 .bufferLoop
         moveq      #0,d1
         move.w     (a0),d1                                     ;buffer length
-        sne        rc_Compress                                 ;set compression used flag if either buffer length is non-zero
-        beq        .endInit                                    ;but if it's zero skip the rest ...
+        sne        rc_Compress-rc_Vars(a2)                     ;set compression used flag if either buffer length is non-zero
+        beq.s      .endInit                                    ;but if it's zero skip the rest ...
 
         move.l     a0,rc_Ch0_BufferStart-rc_Ch0(a1)            ;store buffer start
         move.l     a0,rc_Ch0_BufferWritePtr-rc_Ch0(a1)         ;store buffer write pointer
@@ -60,25 +61,25 @@ rc_Init:
         adda.l     d1,a0                                       ;calculate next channel's buffer location
         move.l     a0,rc_Ch0_BufferEnd-rc_Ch0(a1)              ;store buffer end
 
-        adda.l     #rc_Ch1-rc_Ch0,a1                           ;next channel structure
+        lea        rc_Ch1-rc_Ch0(a1),a1                        ;next channel structure
         dbf        d0,.bufferLoop
 
-        move.l     a0,rc_SampleStart                           ;store sample pointer
+        move.l     a0,rc_SampleStart-rc_Vars(a2)               ;store sample pointer
 
 .endInit:
-        movem.l    (sp)+,d0-d1/a1
+        movem.l    (sp)+,d0-d1/a1-a2
         rts
         
 ; main playroutine, call this every interrupt
 rc_Music:
         movem.l    d0-d6/a0-a6,-(sp)
         lea        _custom,a0
-        lea        rc_Ch0,a1                                   ;channel structure pointer into A1
-        lea        rc_AudioOffsets,a2                          ;audio offset for the starting channel        
-        move.l     rc_SampleOffsetTable,a3
-        move.l     rc_SampleStart,a4
+        lea        rc_Ch0(pc),a1                               ;channel structure pointer into A1
+        lea        rc_Vars(pc),a2                              ;pointer to vars block      
+        move.l     rc_SampleOffsetTable(pc),a3
+        move.l     rc_SampleStart(pc),a4
 
-	move.w     rc_DmaBits,d6
+	move.w     rc_DmaBits-rc_Vars(a2),d6
         move.w     d6,dmacon(a0)                               ;stop DMA for selected channels
 
         ; store current raster position for later
@@ -87,7 +88,7 @@ rc_Music:
 
 .readNotes:
         moveq      #0,d0                                       ;loop for all channels
-        move.b     rc_NumChannels,d0
+        move.b     rc_NumChannels-rc_Vars(a2),d0
 
         moveq      #0,d4                                        ;init DMA bits
 .loop:
@@ -105,12 +106,12 @@ rc_Music:
 
         ; store note into decompression buffer
 .processNote:
-        tst.b      rc_Compress                                  ;but only if the mod is actually compressed
-        beq        .processVolume
+        tst.b      rc_Compress-rc_Vars(a2)                      ;but only if the mod is actually compressed
+        beq.s      .processVolume
 
         move.l     rc_Ch0_BufferWritePtr-rc_Ch0(a1),a5          ;read the buffer write pointer
         cmpa.l     rc_Ch0_BufferEnd-rc_Ch0(a1),a5               ;check if we need to wrap around
-        bne        .noWrap2
+        bne.s      .noWrap2
 
         move.l     rc_Ch0_BufferStart-rc_Ch0(a1),a5             ;wrap back around to the beginning of the buffer
 .noWrap2:
@@ -125,19 +126,19 @@ rc_Music:
         move.w     d2,rc_Ch0_VOL-rc_Ch0(a1)     	        ;store the volume
 
         btst       #23,d1
-        beq        .noStopDma
+        beq.s      .noStopDma
         bset       d0,d4                                        ;store that we need to stop DMA in order to trigger a new note
 .noStopDma:
 
         btst       #24,d1                                       ;check format of instruction
-        beq        .noNewNote
+        beq.s      .noNewNote
 
 .newNote
         move.l     d1,d2
         moveq      #10,d3                                       ;d3 is shift amount (greater than 7 can't use immediate addressing)
         ror.l      d3,d2                                        ;d3 is free now
         and.w      #$1FFF,d2
-        beq        .noPointerChange
+        beq.s      .noPointerChange
         sub.w      #1,d2
         mulu.w     #OFFSET_TABLE_SIZE,d2
 
@@ -155,14 +156,14 @@ rc_Music:
 .noPointerChange:
         and.w      #$3ff,d1
         move.w     d1,rc_Ch0_PER-rc_Ch0(a1)
-        bra        .nextChannel
+        bra.s      .nextChannel
 
 .noNewNote:
         ;process sample offset
         move.l     d1,d2
         ror.l      #8,d2        
         and.l      #$7fff,d2      
-        beq        .noPointerChange2
+        beq.s      .noPointerChange2
 
         move.l     (rc_Ch0_PTR_loop-rc_Ch0)(a1),d3              ;get old pointer value
         add.l      d2,d3                                        ;add offset
@@ -172,7 +173,7 @@ rc_Music:
         ;process period change
         and.w      #$ff,d1
         ext.w      d1
-        beq        .noPeriodChange
+        beq.s      .noPeriodChange
         move.w     (rc_Ch0_PER-rc_Ch0)(a1),d3                   ;get old period
         add.w      d1,d3                                        ;add offset
         move.w     d3,(rc_Ch0_PER-rc_Ch0)(a1)                   ;store it back for later
@@ -180,15 +181,15 @@ rc_Music:
 .noPeriodChange
 .nextChannel:
 
-        adda.l     #rc_Ch1-rc_Ch0,a1                            ;next channel structure
+        lea        rc_Ch1-rc_Ch0(a1),a1                         ;next channel structure
         dbf        d0,.loop
 
-        move.w     d4,rc_DmaBits                                ;store DMA stop flags for next tick
-        bra        .rc_Music2
+        move.w     d4,rc_DmaBits-rc_Vars(a2)                    ;store DMA stop flags for next tick
+        bra.s      .rc_Music2
 
 .controlWord:
         cmpi.l     #$ffff0000,d1                                ;is it the end of channel data?
-        bge        .channelEnd
+        bge.s      .channelEnd
         
         ; process control commands here
         ; compression lookback only at this time
@@ -198,13 +199,14 @@ rc_Music:
         asl.l      #1,d2
         and.l      #$7fff0000,d2
         swap       d2                                           ;read offset is in d2
-        asl        #2,d2                                        ;offset is in longwords
+        add.w      d2,d2                                        ;offset is in longwords
+        add.w      d2,d2
 
         move.l     (rc_Ch0_BufferWritePtr-rc_Ch0)(a1),d1        ;get end of buffer
         sub.l      d2,d1
 
         cmp.l      (rc_Ch0_BufferStart-rc_Ch0)(a1),d1           ;check for wrap
-        blt        .wrapBuffer
+        blt.s      .wrapBuffer
 
         move.l     d1,(rc_Ch0_BufferReadPtr-rc_Ch0)(a1)         ;store new read ptr
         bra        .getNextNote
@@ -217,7 +219,7 @@ rc_Music:
 .lookBack:
         move.l     rc_Ch0_BufferReadPtr-rc_Ch0(a1),a5           ;current buffer read ptr
         cmpa.l     rc_Ch0_BufferEnd-rc_Ch0(a1),a5               ;check if we need to wrap around
-        bne        .noWrap       
+        bne.s      .noWrap       
        
         move.l     rc_Ch0_BufferStart-rc_Ch0(a1),a5             ;wrap back around to the beginning of the buffer
 .noWrap:
@@ -239,27 +241,27 @@ rc_Music:
 
 .rasterWait1:
         cmp.w      vhposr(a0),d5
-        bgt        .rasterWait1      
+        bgt.s      .rasterWait1      
 
         move.w     #$fff,$180(a0)
    	; poke Paula for all channels 
-        lea        rc_Ch0,a1                                   ;channel structure pointer into A1
+        lea        rc_Ch0(pc),a1                               ;channel structure pointer into A1
         moveq      #0,d0                                       ;loop for all channels
-        move.b     rc_NumChannels,d0
+        move.b     rc_NumChannels-rc_Vars(a2),d0
         moveq      #0,d1
         
 .pokePaula:
-        move.b     (a2,d0),d1                                  ;(we go last to first)
+        move.b     rc_AudioOffsets-rc_Vars(a2,d0),d1           ;get audio register offset for current channel (we go last to first)
 
         btst       d0,d6				
-        beq        .noPokePtrs
+        beq.s      .noPokePtrs
         move.l     rc_Ch0_PTR-rc_Ch0(a1),ac_ptr(a0,d1)         ;poke ac_ptr
         move.w     rc_Ch0_LEN-rc_Ch0(a1),ac_len(a0,d1)         ;poke ac_len
 .noPokePtrs
         move.w     rc_Ch0_PER-rc_Ch0(a1),ac_per(a0,d1)         ;poke ac_per
         move.w     rc_Ch0_VOL-rc_Ch0(a1),ac_vol(a0,d1)         ;poke ac_vol
 
-        adda.l     #rc_Ch1-rc_Ch0,a1                           ;next channel structure
+        lea        rc_Ch1-rc_Ch0(a1),a1                        ;next channel structure
 
         dbf        d0,.pokePaula
 
@@ -273,17 +275,17 @@ rc_Music:
         add.w      #$0110,d2
 .rasterWait2:
         cmp.w      vhposr(a0),d2
-        bgt        .rasterWait2  
+        bgt.s      .rasterWait2  
 
         move.w     #$fff,$180(a0)
 
 	; re-poke the sample pointers for looped sounds
-        lea        rc_Ch0,a1                                   ;channel structure pointer into A1   
+        lea        rc_Ch0(pc),a1                               ;channel structure pointer into A1   
         moveq      #0,d0                                       ;loop for all channels
-        move.b     rc_NumChannels,d0
+        move.b     rc_NumChannels-rc_Vars(a2),d0
 
 .rePokePaula:
-        move.b     (a2,d0),d1                                  ;a2 has ptr to audiooffsets,(we go last to first)
+        move.b     rc_AudioOffsets-rc_Vars(a2,d0),d1           ;a2 has ptr to audiooffsets,(we go last to first)
 
         move.l     rc_Ch0_PTR_loop-rc_Ch0(a1),ac_ptr(a0,d1)    ;always repoke lthe pointers so we can do wavetable stuff
                                                                ;replay code makes sure this doesn't change if not needes, so we can safely do this
@@ -304,6 +306,7 @@ rc_StopMusic:
 ;
 ; variables
 ;
+rc_Vars:
 rc_NumChannels:
         dc.b       0
 rc_Compress:
