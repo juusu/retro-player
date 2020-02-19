@@ -237,13 +237,13 @@ rc_Music:
 
 .rc_Music2:
 ; DMA wait start
-        move.w     #$f00,$180(a0)
+        ;move.w     #$f00,$180(a0)
 
 .rasterWait1:
         cmp.w      vhposr(a0),d5
         bgt.s      .rasterWait1      
 
-        move.w     #$fff,$180(a0)
+        ;move.w     #$fff,$180(a0)
    	; poke Paula for all channels 
         lea        rc_Ch0(pc),a1                               ;channel structure pointer into A1
         moveq      #0,d0                                       ;loop for all channels
@@ -269,7 +269,7 @@ rc_Music:
         or.w       #$8000,d6
         move.w     d6,dmacon(a0)
 
-        move.w     #$0f0,$180(a0)
+        ;move.w     #$0f0,$180(a0)
         ; wait 1.1 rasterlines here
         move.w     vhposr(a0),d2
         add.w      #$0110,d2
@@ -277,7 +277,7 @@ rc_Music:
         cmp.w      vhposr(a0),d2
         bgt.s      .rasterWait2  
 
-        move.w     #$fff,$180(a0)
+        ;move.w     #$fff,$180(a0)
 
 	; re-poke the sample pointers for looped sounds
         lea        rc_Ch0(pc),a1                               ;channel structure pointer into A1   
