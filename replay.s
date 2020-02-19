@@ -1,3 +1,16 @@
+; *************************************************************
+; ** OPTIONS -- this will set some defaults, but you can     **
+; ** override them from your code before including the       **
+; ++ replay routine and it will back away ...                **
+; *************************************************************
+
+        IFND       opt_CIA
+opt_CIA = 1                                                    ; 1=use CIA timer for playback, 0=use vBlank
+                                                               ; vBlank only supports F command parameters <= 1F (no BPM tempo)
+                                                               ; and you need to call rc_Music every frame from your code, but
+                                                               ; saves quite a few bytes in the resulting binary
+        ENDC
+
         INCLUDE    "Includes/custom.i"
 
 _custom = $dff000
@@ -10,9 +23,24 @@ offs_Loop_Length = 10
 
 OFFSET_TABLE_SIZE = 12
 
-; put pointer to mod data in A0 and call init
+        ;CIA - related defines
+        IFNE       opt_CIA = 1
+LVOOpenResource = -498
+AddICRVector    =   -6
+ciatalo         = $400
+ciatahi         = $500
+ciatblo         = $600
+ciatbhi         = $700
+        ENDC
+
+; put pointer to mod data in A0 and call rc_Init
 rc_Init:
+        IFNE       opt_CIA = 1
+        movem.l    d0-d1/a1-a2/a6,-(sp)
+        ELSE
         movem.l    d0-d1/a1-a2,-(sp)
+        ENDC
+
         lea        rc_Ch0(pc),a1                               ;channel var pointer
         lea        rc_Vars(pc),a2                              ;var block pointer
         moveq      #0,d0                                       ;number of channels
@@ -40,7 +68,7 @@ rc_Init:
         move.w     (a0)+,rc_DmaBits-rc_Vars(a2)                ;get initial state of DMACON for this mod
         move.l     a0,rc_SampleOffsetTable-rc_Vars(a2)         ;store pointer to sample offset table
 
-.loop
+.loop:
         cmp.w      #$ffff,(a0)+
         beq.s      .sampleLoopEnd
         lea        OFFSET_TABLE_SIZE-2(a0),a0
@@ -49,11 +77,11 @@ rc_Init:
 .sampleLoopEnd:
         ;d0 still has number of channels, no need to load
         lea        rc_Ch0(pc),a1                               ;go back from 1st channel        
-.bufferLoop
+.bufferLoop:
         moveq      #0,d1
         move.w     (a0),d1                                     ;buffer length
         sne        rc_Compress-rc_Vars(a2)                     ;set compression used flag if either buffer length is non-zero
-        beq.s      .endInit                                    ;but if it's zero skip the rest ...
+        beq.s      .noCompress                                 ;but if it's zero skip the rest ...
 
         move.l     a0,rc_Ch0_BufferStart-rc_Ch0(a1)            ;store buffer start
         move.l     a0,rc_Ch0_BufferWritePtr-rc_Ch0(a1)         ;store buffer write pointer
@@ -64,18 +92,111 @@ rc_Init:
         lea        rc_Ch1-rc_Ch0(a1),a1                        ;next channel structure
         dbf        d0,.bufferLoop
 
+.noCompress:
         move.l     a0,rc_SampleStart-rc_Vars(a2)               ;store sample pointer
 
-.endInit:
+        ; CIA interrupt setup starts here
+        IFNE       opt_CIA = 1
+.setupCIA:
+	lea	   rc_CIAName-rc_Vars(a2),a1                   ;a1 was ch0 ptr - no longer needed as we already initialized the ch structures
+                                                               ;put ptr to cia resource name in there
+        move.l     4.w,a6                                      ;execbase
+        jsr        LVOOpenResource(a6)                         ;d0-d1/a0-a1 are scratch registers for system calls
+        move.l     d0,rc_CIAResource-rc_Vars(a2)               ;store CIA resource pointer
+        beq.s	   .return                                     ;exit if OpenResource failed  
+
+        move.l     d0,a6                                       ;move cia resource to a6 for the AddICRVector call
+        moveq      #1,d1
+        ;try to own the timer, first timer b, then timer a
+.timerLoop:
+        move.l	   d1,d0                                       ;which timer bit goes in d0
+        lea        rc_MusicInterrupt(pc),a0
+        move.l     a0,rc_ReplayPtr-rc_CIAServer(a1)            ;poke replay routine address to interrupt structure
+        lea        rc_CIAServer(pc),a1
+        jsr	   AddICRVector(a6)                            ;try to own the timer
+        tst.l      d0                                          ;did we get it?
+        beq.s      .success                                    ;yes!
+        dbf        d1,.timerLoop                               ;no, try the other one
+
+        ;we didn't get either timer, exit
+        bra.s      .return
+
+.success:
+        move.w     d1,rc_CIATimer-rc_Vars(a2)                  ;store the timer we got
+        
+        move.w	   rc_TimerValue(pc),d0                        ;get the initial timer value 
+        bsr.s      .setTimer                                   ;and set it
+
+        bra.s      .return
+
+; now set timer
+.setTimer:
+        ;can we use a6 here ???? check in the main routine when processing the tempo command
+        lea        $bfd000,a6                                  ;CIA B
+        move.w     d0,d1
+        lsr.w      #8,d1
+
+        tst.w      rc_CIATimer-rc_Vars(a2)                     ;check which timer we got                    
+        bne.s      .setTimerB
+
+.setTimerA:
+        move.b	   d0,ciatalo(a6)
+        move.b	   d1,ciatahi(a6)
+        rts
+
+.setTimerB:
+        move.b	   d0,ciatblo(a6)
+        move.b	   d1,ciatbhi(a6)
+        rts
+
+.return:
+        movem.l    (sp)+,d0-d1/a1-a2/a6
+        ELSE
         movem.l    (sp)+,d0-d1/a1-a2
+        ENDC
+
         rts
         
 ; main playroutine, call this every interrupt
 rc_Music:
+        ;CIA - just call rc_Music once to start playing, this will start the CIA timer which calls rc_MusicInner 
+        IFNE       opt_CIA = 1
+
         movem.l    d0-d6/a0-a6,-(sp)
+        lea        rc_Vars(pc),a2                  ;pointer to vars block 
+        move.l     rc_CIAResource(pc),a6           ;ciab.resource
+        lea        $bfd000,a5                      ;CIA B
+        tst.w      rc_CIATimer-rc_Vars(a2)         ;which timer are we using?
+        bne.s      .timerB
+        
+.timerA:
+        bclr       #3,ciacra(a5)                   ;runmode = continous
+        bset       #0,ciacra(a5)                   ;start timer
+        move.w  #CLEAR|CIAICRF_TA,d0
+        jsr     SetICR(a6)
+        move.w  #CIAICRF_SETCLR|CIAICRF_TA,d0
+        jsr     AbleICR(a6)
+        bra.b   .exit
+
+.timerB:
+    bclr    #CIACRBB_RUNMODE,ciacrb(a5)        ; continous
+    bset    #CIACRBB_START,ciacrb(a5)
+    move.w    #CLEAR|CIAICRF_TB,d0
+    jsr        SetICR(a6)
+    move.w    #CIAICRF_SETCLR|CIAICRF_TB,d0
+    jsr        AbleICR(a6)
+.exit:
+    rts
+
+rc_MusicInterrupt:
+        ENDC
+
+        movem.l    d0-d6/a0-a6,-(sp)
+        lea        rc_Vars(pc),a2                              ;pointer to vars block  
+
+.firstCIACallResume:
         lea        _custom,a0
         lea        rc_Ch0(pc),a1                               ;channel structure pointer into A1
-        lea        rc_Vars(pc),a2                              ;pointer to vars block      
         move.l     rc_SampleOffsetTable(pc),a3
         move.l     rc_SampleStart(pc),a4
 
@@ -133,7 +254,7 @@ rc_Music:
         btst       #24,d1                                       ;check format of instruction
         beq.s      .noNewNote
 
-.newNote
+.newNote:
         move.l     d1,d2
         moveq      #10,d3                                       ;d3 is shift amount (greater than 7 can't use immediate addressing)
         ror.l      d3,d2                                        ;d3 is free now
@@ -178,7 +299,7 @@ rc_Music:
         add.w      d1,d3                                        ;add offset
         move.w     d3,(rc_Ch0_PER-rc_Ch0)(a1)                   ;store it back for later
 
-.noPeriodChange
+.noPeriodChange:
 .nextChannel:
 
         lea        rc_Ch1-rc_Ch0(a1),a1                         ;next channel structure
@@ -257,7 +378,7 @@ rc_Music:
         beq.s      .noPokePtrs
         move.l     rc_Ch0_PTR-rc_Ch0(a1),ac_ptr(a0,d1)         ;poke ac_ptr
         move.w     rc_Ch0_LEN-rc_Ch0(a1),ac_len(a0,d1)         ;poke ac_len
-.noPokePtrs
+.noPokePtrs:
         move.w     rc_Ch0_PER-rc_Ch0(a1),ac_per(a0,d1)         ;poke ac_per
         move.w     rc_Ch0_VOL-rc_Ch0(a1),ac_vol(a0,d1)         ;poke ac_vol
 
@@ -299,8 +420,8 @@ rc_Music:
         rts                                                     ;all done!
 
 rc_StopMusic:
-	lea     _custom,a0
-	move.w	#$000f,dmacon(a0)
+	lea        _custom,a0
+	move.w	   #$000f,dmacon(a0)
 	rts
         
 ;
@@ -324,7 +445,32 @@ rc_SampleStart:
 
 rc_AudioOffsets:
         dc.b       aud0,aud1,aud2,aud3
-        ;dc.b       aud3,aud2,aud1,aud0
+
+; CIA player variables - only use if opt_CIA is set to non-zero
+        IFNE       opt_CIA=1
+
+rc_CIAName:	
+        dc.b       "ciab.resource",0
+rc_CIAResource:	
+        dc.l       0
+rc_CIATimer:
+	dc.w       0
+rc_TimerValue:	
+        dc.w       0
+
+rc_CIAServer:
+	dc.l       0,0
+	dc.b       2,5                                          ;type, priority
+	dc.l       rc_IntName
+	dc.l       0
+rc_ReplayPtr:
+        dc.l       0                                            ;poke playroutine 
+
+rc_IntName:
+	dc.b       "RetroReplay Interrupt",0
+
+        ENDC
+        EVEN
 
 rc_Ch0:
 rc_Ch0_DataStart:
