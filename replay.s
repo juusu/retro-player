@@ -27,7 +27,7 @@ offs_Loop_Length    =      10
 OFFSET_TABLE_SIZE   =      12
 
         ;CIA - related defines
-        IFNE        opt_CIA = 1
+        IFNE        opt_CIA
 LVOOpenResource     =    -498
 AddICRVector        =      -6
 ciatalo             =    $400
@@ -38,7 +38,7 @@ ciatbhi             =    $700
 
 ; put pointer to mod data in A0 and call rc_Init
 rc_Init:
-        IFNE        opt_CIA = 1
+        IFNE        opt_CIA
         movem.l     d0-d1/a1-a2/a6,-(sp)
         ELSE
         movem.l     d0-d1/a1-a2,-(sp)
@@ -99,7 +99,7 @@ rc_Init:
         move.l      a0,rc_SampleStart-rc_Vars(a2)               ;store sample pointer
 
         ; CIA interrupt setup starts here
-        IFNE        opt_CIA = 1
+        IFNE        opt_CIA
 .setupCIA:
 	    lea	        rc_CIAName-rc_Vars(a2),a1                   ;a1 was ch0 ptr - no longer needed as we already initialized the ch structures
                                                                 ;put ptr to cia resource name in there
@@ -163,7 +163,7 @@ rc_Init:
 ; main playroutine, call this every interrupt
 rc_Music:
         ;CIA - just call rc_Music once to start playing, this will start the CIA timer which calls rc_MusicInner 
-        IFNE       opt_CIA = 1
+        IFNE        opt_CIA
 
         movem.l     d0-d6/a0-a6,-(sp)
         lea         rc_Vars(pc),a2                              ;pointer to vars block 
@@ -468,7 +468,7 @@ rc_AudioOffsets:
         dc.b        aud0,aud1,aud2,aud3
 
 ;CIA player variables - only use if opt_CIA is set to non-zero
-        IFNE        opt_CIA=1
+        IFNE        opt_CIA
 
 rc_CIAName:	
         dc.b        "ciab.resource",0
