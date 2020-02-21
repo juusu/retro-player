@@ -28,18 +28,23 @@ OFFSET_TABLE_SIZE   =      12
 
         ;CIA - related defines
         IFNE        opt_CIA
-LVOOpenResource     =    -498
+OpenResource        =    -498
 AddICRVector        =      -6
+RemICRVector        =     -12
+AbleICR             =     -18
+SetICR              =     -24
 ciatalo             =    $400
 ciatahi             =    $500
 ciatblo             =    $600
 ciatbhi             =    $700
+ciacra	            =	 $E00
+ciacrb	            =	 $F00
         ENDC
 
 ; put pointer to mod data in A0 and call rc_Init
 rc_Init:
         IFNE        opt_CIA
-        movem.l     d0-d1/a1-a2/a6,-(sp)
+        movem.l     d0-d2/a1-a2/a6,-(sp)
         ELSE
         movem.l     d0-d1/a1-a2,-(sp)
         ENDC
@@ -101,31 +106,36 @@ rc_Init:
         ; CIA interrupt setup starts here
         IFNE        opt_CIA
 .setupCIA:
-	    lea	        rc_CIAName-rc_Vars(a2),a1                   ;a1 was ch0 ptr - no longer needed as we already initialized the ch structures
+        lea	        rc_CIAName-rc_Vars(a2),a1                   ;a1 was ch0 ptr - no longer needed as we already initialized the ch structures
                                                                 ;put ptr to cia resource name in there
         move.l      4.w,a6                                      ;execbase
-        jsr         LVOOpenResource(a6)                         ;d0-d1/a0-a1 are scratch registers for system calls
+        jsr         OpenResource(a6)                            ;d0-d1/a0-a1 are scratch registers for system calls
         move.l      d0,rc_CIAResource-rc_Vars(a2)               ;store CIA resource pointer
         beq.s	    .return                                     ;exit if OpenResource failed  
 
+        ;init the interrupt structure
+        lea         rc_MusicInterrupt(pc),a0
+        lea         rc_CIAServer(pc),a1
+        move.l      a0,rc_ReplayPtr-rc_CIAServer(a1)            ;poke replay routine address to interrupt structure
+        lea         rc_IntName(pc),a0
+        move.l      a0,rc_IntnamePtr-rc_CIAServer(a1)           ;and poke the location of the interrupt name
+
         move.l      d0,a6                                       ;move cia resource to a6 for the AddICRVector call
-        moveq       #1,d1
+        moveq       #1,d2
         ;try to own the timer, first timer b, then timer a
 .timerLoop:
-        move.l	    d1,d0                                       ;which timer bit goes in d0
-        lea         rc_MusicInterrupt(pc),a0
-        move.l      a0,rc_ReplayPtr-rc_CIAServer(a1)            ;poke replay routine address to interrupt structure
-        lea         rc_CIAServer(pc),a1
+        move.l	    d2,d0                                       ;which timer bit goes in d0
+
         jsr	        AddICRVector(a6)                            ;try to own the timer
         tst.l       d0                                          ;did we get it?
         beq.s       .success                                    ;yes!
-        dbf         d1,.timerLoop                               ;no, try the other one
+        dbf         d2,.timerLoop                               ;no, try the other one
 
         ;we didn't get either timer, exit
         bra.s       .return
 
 .success:
-        move.w      d1,rc_CIATimer-rc_Vars(a2)                  ;store the timer we got
+        move.w      d2,rc_CIATimer-rc_Vars(a2)                  ;store the timer we got
         
         move.w	    rc_TimerValue(pc),d0                        ;get the initial timer value 
         bsr.s       .setTimer                                   ;and set it
@@ -153,7 +163,7 @@ rc_Init:
         rts
 
 .return:
-        movem.l     (sp)+,d0-d1/a1-a2/a6
+        movem.l     (sp)+,d0-d2/a1-a2/a6
         ELSE
         movem.l     (sp)+,d0-d1/a1-a2
         ENDC
@@ -165,56 +175,55 @@ rc_Music:
         ;CIA - just call rc_Music once to start playing, this will start the CIA timer which calls rc_MusicInner 
         IFNE        opt_CIA
 
-        movem.l     d0-d6/a0-a6,-(sp)
-        lea         rc_Vars(pc),a2                              ;pointer to vars block 
+        movem.l     d0/a4-a6,-(sp)
+        lea         rc_Vars(pc),a4                              ;pointer to vars block 
         move.l      rc_CIAResource(pc),a6                       ;ciab.resource
         lea         $bfd000,a5                                  ;CIA B
-        tst.w       rc_CIATimer-rc_Vars(a2)                     ;which timer are we using?
+        tst.w       rc_CIATimer-rc_Vars(a4)                     ;which timer are we using?
         bne.s       .timerB
         
 .timerA:
         bclr        #3,ciacra(a5)                               ;runmode = continous
-        bset        #0,ciacra(a5)                               ;start timer
-        move.w      #CLEAR|CIAICRF_TA,d0
+        bset        #0,ciacra(a5)                               ;timer started
+        move.w      #1,d0                                       ;clear timer a interrupt
         jsr         SetICR(a6)
-        move.w      #CIAICRF_SETCLR|CIAICRF_TA,d0
+        move.w      #$81,d0                                     ;enable timer a interrupts
         jsr         AbleICR(a6)
         bra.b       .exit
 
 .timerB:
         bclr        #3,ciacrb(a5)                               ;runmode = continous
         bset        #0,ciacrb(a5)                               ;start timer
-        move.w      #CLEAR|CIAICRF_TB,d0
+        move.w      #2,d0                                       ;clear timer b interrupt
         jsr         SetICR(a6)
-        move.w      #CIAICRF_SETCLR|CIAICRF_TB,d0
+        move.w      #$82,d0                                     ;enable timer a interrupts
         jsr         AbleICR(a6)
 .exit:
+        movem.l     (sp)+,d0/a4-a6
         rts
 
 rc_MusicInterrupt:
         ENDC
 
+        movem.l     d0-d6/a0-a6,-(sp)
         lea         _custom,a0
         
-        IFNE        opt_RASTER&&!opt_CIA
+        ;IFNE        opt_RASTER&~opt_CIA
         move.w      #$fff,$180(a0)
-        ENDC
+        ;ENDC
 
-        movem.l     d0-d6/a0-a6,-(sp)
         lea         rc_Vars(pc),a2                              ;pointer to vars block  
-
-.firstCIACallResume:
-
         lea         rc_Ch0(pc),a1                               ;channel structure pointer into A1
         move.l      rc_SampleOffsetTable(pc),a3
         move.l      rc_SampleStart(pc),a4
 
-	    move.w      rc_DmaBits-rc_Vars(a2),d6
+        move.w      rc_DmaBits-rc_Vars(a2),d6
         move.w      d6,dmacon(a0)                               ;stop DMA for selected channels
 
         ; store current raster position for later
-        move.w      vhposr(a0),d5
-        add.w       #$0780,d5
+        move.l      vposr(a0),d5
+        and.l       #$1ffff,d5
+        add.l       #$0780,d5
 
 .readNotes:
         moveq       #0,d0                                       ;loop for all channels
@@ -366,18 +375,21 @@ rc_MusicInterrupt:
         bra         .getNextNote
 
 .rc_Music2:
-        IFNE        opt_RASTER&&!opt_CIA
+        IFNE        opt_RASTER&~opt_CIA
         move.w      #$f00,$180(a0)
         ENDC
 
 .rasterWait1:
-        cmp.w       vhposr(a0),d5
+        move.l      vposr(a0),d4
+        and.l       #$1ffff,d4
+        cmp.l       d4,d5
         bgt.s       .rasterWait1      
 
-        IFNE        opt_RASTER&&!opt_CIA
+        IFNE        opt_RASTER&~opt_CIA
         move.w      #$fff,$180(a0)
         ENDC
-   	    ;poke Paula for all channels 
+        
+        ;poke Paula for all channels 
         lea         rc_Ch0(pc),a1                               ;channel structure pointer into A1
         moveq       #0,d0                                       ;loop for all channels
         move.b      rc_NumChannels-rc_Vars(a2),d0
@@ -398,26 +410,29 @@ rc_MusicInterrupt:
 
         dbf         d0,.pokePaula
 
-	    ;re-enable audio DMA
+        ;re-enable audio DMA
         or.w        #$8000,d6
         move.w      d6,dmacon(a0)
 
-        IFNE        opt_RASTER&&!opt_CIA
+        IFNE        opt_RASTER&~opt_CIA
         move.w      #$0f0,$180(a0)
         ENDC
 
         ;wait 1.1 rasterlines here
-        move.w      vhposr(a0),d2
-        add.w       #$0110,d2
+        move.l      vposr(a0),d2
+        and.l       #$1ffff,d2
+        add.l       #$0110,d2
 .rasterWait2:
-        cmp.w       vhposr(a0),d2
+        move.l      vposr(a0),d3
+        and.l       #$1ffff,d3
+        cmp.l       d3,d2
         bgt.s       .rasterWait2  
 
-        IFNE        opt_RASTER&&!opt_CIA
+        IFNE        opt_RASTER&~opt_CIA
         move.w      #$fff,$180(a0)
         ENDC
 
-	    ;re-poke the sample pointers for looped sounds
+        ;re-poke the sample pointers for looped sounds
         lea         rc_Ch0(pc),a1                               ;channel structure pointer into A1   
         moveq       #0,d0                                       ;loop for all channels
         move.b      rc_NumChannels-rc_Vars(a2),d0
@@ -433,17 +448,59 @@ rc_MusicInterrupt:
 
         dbf         d0,.rePokePaula 
         
-        IFNE        opt_RASTER&&!opt_CIA
+        ;IFNE        opt_RASTER&~opt_CIA
         move.w      #$05a,$180(a0)
-        ENDC
+        ;ENDC
 
         movem.l     (sp)+,d0-d6/a0-a6
         rts                                                     ;all done!
 
 rc_StopMusic:
-	    lea         _custom,a0
-	    move.w	    #$000f,dmacon(a0)
-	    rts
+        IFNE        opt_CIA
+         
+        movem.l     d0/a1/a4-a6,-(sp)
+        lea         rc_Vars(pc),a4                              ;pointer to vars block 
+        move.l      rc_CIAResource(pc),a6                       ;ciab.resource
+        lea         $bfd000,a5                                  ;CIA B
+        tst.w       rc_CIATimer-rc_Vars(a4)                     ;which timer are we using?
+        bne.s       .timerB       
+        
+.timerA:
+        move.w      #1,d0                                       ;disable timer 1 ICR
+        jsr         AbleICR(a6)
+        and.b       #$fe,ciacra(a5)                             ;clear CIA start bit
+
+        moveq       #1,d0                                       ;try timer A
+        lea         rc_CIAServer(pc),a1                         ;my interrupt struct
+        jsr         RemICRVector(a6)
+
+        bra.s       .exit
+.timerB:
+        move.w      #2,d0
+        jsr         AbleICR(a6)
+        and.b       #$fe,ciacrb(a5)
+
+        moveq       #2,d0                                       ;try timer B
+        lea         rc_CIAServer(pc),a1                         ;my interrupt struct
+        jsr         RemICRVector(a6)
+.exit:
+
+        ELSE
+
+        move.l      a0,-(sp)
+        
+        ENDC
+
+        lea         _custom,a0
+        move.w	    #$000f,dmacon(a0)
+
+        IFNE        opt_CIA
+        movem.l     (sp)+,d0/a1/a4-a6
+        ELSE
+        movem.l     (sp)+,a0
+        ENDC
+
+        rts
         
 ;
 ; variables
@@ -475,20 +532,21 @@ rc_CIAName:
 rc_CIAResource:	
         dc.l        0
 rc_CIATimer:
-	    dc.w        0
-rc_TimerValue:	
         dc.w        0
+rc_TimerValue:	
+        dc.w        $376c                                       ;125 bpm
 
 rc_CIAServer:
-	    dc.l        0,0
-	    dc.b        2,5                                         ;type, priority
-	    dc.l        rc_IntName
-	    dc.l        0
+        dc.l        0,0
+        dc.b        2,127                                       ;type, priority
+rc_IntnamePtr:        
+        dc.l        0
+        dc.l        0
 rc_ReplayPtr:
         dc.l        0                                           ;poke playroutine 
 
 rc_IntName:
-	    dc.b        "RetroReplay Interrupt",0
+        dc.b        "RetroReplay Interrupt",0
 
         ENDC
         EVEN
