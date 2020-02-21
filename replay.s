@@ -16,6 +16,20 @@ opt_RASTER = 0                                                  ; 1=show rastert
 
         INCLUDE     "Includes/custom.i"
 
+; amiga PAL clock = 7093789.2 Hz
+; Paula clock divider - 2 == PAL video clock
+; CIA clock divider - 10
+; lowest PT period - 907
+
+; 907 * 2 * 2 = 3620 clock cycles to play a word at lowest samplerate
+; /10 = 362 - CIA timer value for first delay
+DMADelay1           = 362
+; 1.1 scanines = 227 * 1.1 = 250 PAL cycles = 500 CPU cycles
+; /10 = 50 - CIA timer value for second delay
+DMADelay2           = 50
+
+TotalDMADelay       = DMADelay1+DMADelay2
+
 _custom             = $dff000
 
 ;.mod instrument structure offsets
@@ -114,7 +128,7 @@ rc_Init:
         beq.s	    .return                                     ;exit if OpenResource failed  
 
         ;init the interrupt structure
-        lea         rc_MusicInterrupt(pc),a0
+        lea         rc_Music1(pc),a0
         lea         rc_CIAServer(pc),a1
         move.l      a0,rc_ReplayPtr-rc_CIAServer(a1)            ;poke replay routine address to interrupt structure
         lea         rc_IntName(pc),a0
@@ -137,13 +151,20 @@ rc_Init:
 .success:
         move.w      d2,rc_CIATimer-rc_Vars(a2)                  ;store the timer we got
         
-        move.w	    rc_TimerValue(pc),d0                        ;get the initial timer value 
-        bsr.s       .setTimer                                   ;and set it
+        move.w      #DMADelay1,d0
+        ;move.w	    rc_TimerValue(pc),d0                        ;get the initial timer value 
+        bsr.s       rc_setTimer                                 ;and set it
 
-        bra.s       .return
+.return:
+        movem.l     (sp)+,d0-d2/a1-a2/a6
+        ELSE
+        movem.l     (sp)+,d0-d1/a1-a2
+        ENDC
 
+        rts
+        
 ; now set timer
-.setTimer:
+rc_setTimer:
         ;can we use a6 here ???? check in the main routine when processing the tempo command
         lea         $bfd000,a6                                  ;CIA B
         move.w      d0,d1
@@ -160,14 +181,6 @@ rc_Init:
 .setTimerB:
         move.b	    d0,ciatblo(a6)
         move.b	    d1,ciatbhi(a6)
-        rts
-
-.return:
-        movem.l     (sp)+,d0-d2/a1-a2/a6
-        ELSE
-        movem.l     (sp)+,d0-d1/a1-a2
-        ENDC
-
         rts
         
 ; main playroutine, call this every interrupt
@@ -202,7 +215,13 @@ rc_Music:
         movem.l     (sp)+,d0/a4-a6
         rts
 
-rc_MusicInterrupt:
+rc_Music1:
+        lea         rc_Music2(pc),a0
+        lea         rc_Vars(pc),a2  
+        move.l      a0,rc_ReplayPtr-rc_Vars(a2)
+        move.w      #DMADelay2,d0
+        bsr.w       rc_setTimer
+
         ENDC
 
         movem.l     d0-d6/a0-a6,-(sp)
@@ -212,7 +231,10 @@ rc_MusicInterrupt:
         move.w      #$fff,$180(a0)
         ;ENDC
 
+        IFEQ        opt_CIA
         lea         rc_Vars(pc),a2                              ;pointer to vars block  
+        ENDC
+
         lea         rc_Ch0(pc),a1                               ;channel structure pointer into A1
         move.l      rc_SampleOffsetTable(pc),a3
         move.l      rc_SampleStart(pc),a4
@@ -324,7 +346,7 @@ rc_MusicInterrupt:
         dbf         d0,.loop
 
         move.w      d4,rc_DmaBits-rc_Vars(a2)                   ;store DMA stop flags for next tick
-        bra.s       .rc_Music2
+        bra.s       rc_Music2
 
 .controlWord:
         cmpi.l      #$ffff0000,d1                               ;is it the end of channel data?
@@ -374,16 +396,26 @@ rc_MusicInterrupt:
         move.l      d1,(rc_Ch0_BufferReadPtr-rc_Ch0)(a1)        ;store new read ptr
         bra         .getNextNote
 
-.rc_Music2:
+rc_Music2:
         IFNE        opt_RASTER&~opt_CIA
         move.w      #$f00,$180(a0)
         ENDC
 
+        IFNE        opt_CIA
+        lea         rc_Music3(pc),a0
+        lea         rc_Vars(pc),a2  
+        move.l      a0,rc_ReplayPtr-rc_Vars(a2)
+        move.w      #DMADelay2,d0
+        bsr.w       rc_setTimer        
+        ENDC
+
+        IFEQ        opt_CIA
 .rasterWait1:
         move.l      vposr(a0),d4
         and.l       #$1ffff,d4
         cmp.l       d4,d5
-        bgt.s       .rasterWait1      
+        bgt.s       .rasterWait1    
+        ENDC   
 
         IFNE        opt_RASTER&~opt_CIA
         move.w      #$fff,$180(a0)
@@ -418,6 +450,15 @@ rc_MusicInterrupt:
         move.w      #$0f0,$180(a0)
         ENDC
 
+        IFNE        opt_CIA
+rc_Music3:
+        lea         rc_Music1(pc),a0
+        lea         rc_Vars(pc),a2  
+        move.l      a0,rc_ReplayPtr-rc_Vars(a2)
+        move.w      rc_TimerValue,d0
+        bsr.w       rc_setTimer 
+        ENDC
+        IFEQ        opt_CIA
         ;wait 1.1 rasterlines here
         move.l      vposr(a0),d2
         and.l       #$1ffff,d2
@@ -427,6 +468,7 @@ rc_MusicInterrupt:
         and.l       #$1ffff,d3
         cmp.l       d3,d2
         bgt.s       .rasterWait2  
+        ENDC
 
         IFNE        opt_RASTER&~opt_CIA
         move.w      #$fff,$180(a0)
@@ -534,7 +576,7 @@ rc_CIAResource:
 rc_CIATimer:
         dc.w        0
 rc_TimerValue:	
-        dc.w        $376c                                       ;125 bpm
+        dc.w        $376c-TotalDMADelay                         ;125 bpm
 
 rc_CIAServer:
         dc.l        0,0
