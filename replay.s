@@ -120,7 +120,7 @@ rc_Init:
         ; CIA interrupt setup starts here
         IFNE        opt_CIA
 .setupCIA:
-        lea	        rc_CIAName-rc_Vars(a2),a1                   ;a1 was ch0 ptr - no longer needed as we already initialized the ch structures
+        lea	    rc_CIAName-rc_Vars(a2),a1                   ;a1 was ch0 ptr - no longer needed as we already initialized the ch structures
                                                                 ;put ptr to cia resource name in there
         move.l      4.w,a6                                      ;execbase
         jsr         OpenResource(a6)                            ;d0-d1/a0-a1 are scratch registers for system calls
@@ -128,9 +128,10 @@ rc_Init:
         beq.s	    .return                                     ;exit if OpenResource failed  
 
         ;init the interrupt structure
-        lea         rc_Music1(pc),a0
+        lea         rc_MusicInterrupt(pc),a0
         lea         rc_CIAServer(pc),a1
-        move.l      a0,rc_ReplayPtr-rc_CIAServer(a1)            ;poke replay routine address to interrupt structure
+        move.l      a0,rc_CodePtr-rc_CIAServer(a1)              ;poke replay routine address to interrupt structure
+        move.l      a2,rc_DataPtr-rc_CIAServer(a1)              ;poke var block address to interrupt structure
         lea         rc_IntName(pc),a0
         move.l      a0,rc_IntnamePtr-rc_CIAServer(a1)           ;and poke the location of the interrupt name
 
@@ -140,7 +141,7 @@ rc_Init:
 .timerLoop:
         move.l	    d2,d0                                       ;which timer bit goes in d0
 
-        jsr	        AddICRVector(a6)                            ;try to own the timer
+        jsr	    AddICRVector(a6)                            ;try to own the timer
         tst.l       d0                                          ;did we get it?
         beq.s       .success                                    ;yes!
         dbf         d2,.timerLoop                               ;no, try the other one
@@ -151,10 +152,10 @@ rc_Init:
 .success:
         move.w      d2,rc_CIATimer-rc_Vars(a2)                  ;store the timer we got
         
+        move.l      a2,a1                                       ;rc_setTimer wants var pointer in a1 ... comes in handy later when exec fills this for us when calling the interrupt
         move.w      #DMADelay1,d0
-        ;move.w	    rc_TimerValue(pc),d0                        ;get the initial timer value 
         bsr.s       rc_setTimer                                 ;and set it
-
+        move.w      #2,rc_IntSwitch-rc_Vars(a2)                 ;init jumptable position
 .return:
         movem.l     (sp)+,d0-d2/a1-a2/a6
         ELSE
@@ -170,7 +171,7 @@ rc_setTimer:
         move.w      d0,d1
         lsr.w       #8,d1
 
-        tst.w       rc_CIATimer-rc_Vars(a2)                     ;check which timer we got                    
+        tst.w       rc_CIATimer-rc_Vars(a1)                     ;check which timer we got                    
         bne.s       .setTimerB
 
 .setTimerA:
@@ -183,7 +184,7 @@ rc_setTimer:
         move.b	    d1,ciatbhi(a6)
         rts
         
-; main playroutine, call this every interrupt
+; main playroutine, call this every vblank interrupt
 rc_Music:
         ;CIA - just call rc_Music once to start playing, this will start the CIA timer which calls rc_MusicInner 
         IFNE        opt_CIA
@@ -215,76 +216,96 @@ rc_Music:
         movem.l     (sp)+,d0/a4-a6
         rts
 
+rc_MusicInterrupt:
+        movem.l     d2-d6/a2-a4,-(sp)
+
+        ;jumptable for CIA mode
+        lea         rc_JumpTable(pc),a2
+        move.w      rc_IntSwitch-rc_Vars(a1),d0
+        add.w       #1,d0
+        cmpi.w      #3,d0
+        bne.s       .noOverflow
+        moveq       #0,d0
+.noOverflow:
+        move.w      d0,rc_IntSwitch-rc_Vars(a1)                 ;save next position
+        add.w       d0,d0                                       ;jumptable is words
+        move.w      rc_JumpTable(pc,d0.w),d0                    ;get offset from jumptable
+        jmp         rc_JumpTable(pc,d0.w)
+
+rc_JumpTable:
+        dc.w        rc_Music1-rc_JumpTable
+        dc.w        rc_Music2-rc_JumpTable
+        dc.w        rc_Music3-rc_JumpTable
+
 rc_Music1:
-        lea         rc_Music2(pc),a0
-        lea         rc_Vars(pc),a2  
-        move.l      a0,rc_ReplayPtr-rc_Vars(a2)
         move.w      #DMADelay2,d0
         bsr.w       rc_setTimer
 
-        ENDC
-
+        ELSE
         movem.l     d0-d6/a0-a6,-(sp)
         lea         _custom,a0
-        
-        ;IFNE        opt_RASTER&~opt_CIA
-        move.w      #$fff,$180(a0)
-        ;ENDC
-
-        IFEQ        opt_CIA
-        lea         rc_Vars(pc),a2                              ;pointer to vars block  
         ENDC
 
-        lea         rc_Ch0(pc),a1                               ;channel structure pointer into A1
+        IFNE        opt_RASTER
+        move.w      #$fff,$180(a0)
+        ENDC
+
+        IFEQ        opt_CIA
+        lea         rc_Vars(pc),a1                              ;pointer to vars block  
+        ENDC
+
+        lea         rc_Ch0(pc),a2                               ;channel structure pointer into A2
         move.l      rc_SampleOffsetTable(pc),a3
         move.l      rc_SampleStart(pc),a4
 
-        move.w      rc_DmaBits-rc_Vars(a2),d6
+        move.w      rc_DmaBits-rc_Vars(a1),d6
         move.w      d6,dmacon(a0)                               ;stop DMA for selected channels
 
+        IFEQ        opt_CIA
         ; store current raster position for later
         move.l      vposr(a0),d5
         and.l       #$1ffff,d5
         add.l       #$0780,d5
+        ENDC
 
 .readNotes:
         moveq       #0,d0                                       ;loop for all channels
-        move.b      rc_NumChannels-rc_Vars(a2),d0
+        move.b      rc_NumChannels-rc_Vars(a1),d0
 
         moveq       #0,d4                                       ;init DMA bits
 .loop:
 
 .getNextNote:
-        tst.w       rc_Ch0_ReadLength-rc_Ch0(a1)                ;do we have bytes to read from the buffer still?
+        tst.w       rc_Ch0_ReadLength-rc_Ch0(a2)                ;do we have bytes to read from the buffer still?
         bne         .lookBack                                   ;yes, do it!
 
-        move.l      rc_Ch0_DataPtr-rc_Ch0(a1),a6                ;get current note pointer
+        move.l      rc_Ch0_DataPtr-rc_Ch0(a2),a6                ;get current note pointer
 .readNote:
         move.l      (a6)+,d1                                    ;read current note into D1
-        move.l      a6,rc_Ch0_DataPtr-rc_Ch0(a1)                ;store current channel note pointer
+        move.l      a6,rc_Ch0_DataPtr-rc_Ch0(a2)                ;store current channel note pointer
         cmpi.l      #$c0000000,d1                               ;check for control words
         bhi         .controlWord
 
         ; store note into decompression buffer
 .processNote:
-        tst.b       rc_Compress-rc_Vars(a2)                     ;but only if the mod is actually compressed
+        tst.b       rc_Compress-rc_Vars(a1)                     ;but only if the mod is actually compressed
         beq.s       .processVolume
 
-        move.l      rc_Ch0_BufferWritePtr-rc_Ch0(a1),a5         ;read the buffer write pointer
-        cmpa.l      rc_Ch0_BufferEnd-rc_Ch0(a1),a5              ;check if we need to wrap around
+        move.l      rc_Ch0_BufferWritePtr-rc_Ch0(a2),a5         ;read the buffer write pointer
+        cmpa.l      rc_Ch0_BufferEnd-rc_Ch0(a2),a5              ;check if we need to wrap around
         bne.s       .noWrap2
 
-        move.l      rc_Ch0_BufferStart-rc_Ch0(a1),a5            ;wrap back around to the beginning of the buffer
+        move.l      rc_Ch0_BufferStart-rc_Ch0(a2),a5            ;wrap back around to the beginning of the buffer
 .noWrap2:
         move.l      d1,(a5)+                                    ;store the current note into the buffer
-        move.l      a5,rc_Ch0_BufferWritePtr-rc_Ch0(a1)         ;store the buffer write pointer
+        move.l      a5,rc_Ch0_BufferWritePtr-rc_Ch0(a2)         ;store the buffer write pointer
 
 .processVolume
         ;process volume
         move.l      d1,d2                                       ;transfer to d2 to extract volume
         rol.l       #7,d2                                       ;rotate to beginning of register
         and.w       #$7F,d2                                     ;mask unnecessary bits
-        move.w      d2,rc_Ch0_VOL-rc_Ch0(a1)     	            ;store the volume
+        move.w      d2,rc_Ch0_VOL-rc_Ch0(a2)                    ;store the volume
 
         btst        #23,d1
         beq.s       .noStopDma
@@ -306,17 +327,17 @@ rc_Music1:
         ; copy values from sample offset table to channel vars
         move.l      offs_Sample_Start(a3,d2),a5
         adda.l      a4,a5
-        move.l      a5,rc_Ch0_PTR-rc_Ch0(a1)
+        move.l      a5,rc_Ch0_PTR-rc_Ch0(a2)
         move.l      offs_Loop_Start(a3,d2),a5
         adda.l      a4,a5        
-        move.l      a5,rc_Ch0_PTR_loop-rc_Ch0(a1)
+        move.l      a5,rc_Ch0_PTR_loop-rc_Ch0(a2)
         
-        move.w      offs_Sample_Length(a3,d2),rc_Ch0_LEN-rc_Ch0(a1)
-        move.w      offs_Loop_Length(a3,d2),rc_Ch0_LEN_loop-rc_Ch0(a1)
+        move.w      offs_Sample_Length(a3,d2),rc_Ch0_LEN-rc_Ch0(a2)
+        move.w      offs_Loop_Length(a3,d2),rc_Ch0_LEN_loop-rc_Ch0(a2)
 
 .noPointerChange:
         and.w       #$3ff,d1
-        move.w      d1,rc_Ch0_PER-rc_Ch0(a1)
+        move.w      d1,rc_Ch0_PER-rc_Ch0(a2)
         bra.s       .nextChannel
 
 .noNewNote:
@@ -326,27 +347,35 @@ rc_Music1:
         and.l       #$7fff,d2      
         beq.s       .noPointerChange2
 
-        move.l      (rc_Ch0_PTR_loop-rc_Ch0)(a1),d3             ;get old pointer value
+        move.l      (rc_Ch0_PTR_loop-rc_Ch0)(a2),d3             ;get old pointer value
         add.l       d2,d3                                       ;add offset
-        move.l      d3,(rc_Ch0_PTR_loop-rc_Ch0)(a1)             ;store it back for later
+        move.l      d3,(rc_Ch0_PTR_loop-rc_Ch0)(a2)             ;store it back for later
 
 .noPointerChange2:
         ;process period change
         and.w       #$ff,d1
         ext.w       d1
         beq.s       .noPeriodChange
-        move.w      (rc_Ch0_PER-rc_Ch0)(a1),d3                  ;get old period
+        move.w      (rc_Ch0_PER-rc_Ch0)(a2),d3                  ;get old period
         add.w       d1,d3                                       ;add offset
-        move.w      d3,(rc_Ch0_PER-rc_Ch0)(a1)                  ;store it back for later
+        move.w      d3,(rc_Ch0_PER-rc_Ch0)(a2)                  ;store it back for later
 
 .noPeriodChange:
 .nextChannel:
 
-        lea         rc_Ch1-rc_Ch0(a1),a1                        ;next channel structure
+        lea         rc_Ch1-rc_Ch0(a2),a2                        ;next channel structure
         dbf         d0,.loop
 
-        move.w      d4,rc_DmaBits-rc_Vars(a2)                   ;store DMA stop flags for next tick
+        move.w      d4,rc_DmaBits-rc_Vars(a1)                   ;store DMA stop flags for next tick
+
+        ; in vblank mode continue onto the next part of the playrouting
+        IFEQ        opt_CIA
         bra.s       rc_Music2
+        ;for cia mode return from interrupt, next interrupt should trigger the second part
+        ELSE
+        movem       (sp)+,d2-d6/a2-a4                           ;but make sure to restore the registers when returning from interrupt
+        rts
+        ENDC
 
 .controlWord:
         cmpi.l      #$ffff0000,d1                               ;is it the end of channel data?
@@ -356,55 +385,53 @@ rc_Music1:
         ; compression lookback only at this time
         move.l      d1,d2
         and.w       #$7fff,d1                                   ;read length is in d1
-        move.w      d1,(rc_Ch0_ReadLength-rc_Ch0)(a1)           ;store it
+        move.w      d1,(rc_Ch0_ReadLength-rc_Ch0)(a2)           ;store it
         asl.l       #1,d2
         and.l       #$7fff0000,d2
         swap        d2                                          ;read offset is in d2
         add.w       d2,d2                                       ;offset is in longwords
         add.w       d2,d2
 
-        move.l      (rc_Ch0_BufferWritePtr-rc_Ch0)(a1),d1       ;get end of buffer
+        move.l      (rc_Ch0_BufferWritePtr-rc_Ch0)(a2),d1       ;get end of buffer
         sub.l       d2,d1
 
-        cmp.l       (rc_Ch0_BufferStart-rc_Ch0)(a1),d1          ;check for wrap
+        cmp.l       (rc_Ch0_BufferStart-rc_Ch0)(a2),d1          ;check for wrap
         blt.s       .wrapBuffer
 
-        move.l      d1,(rc_Ch0_BufferReadPtr-rc_Ch0)(a1)        ;store new read ptr
+        move.l      d1,(rc_Ch0_BufferReadPtr-rc_Ch0)(a2)        ;store new read ptr
         bra         .getNextNote
 
 .channelEnd:
         ;go back to beginning of channel data
-        move.l      rc_Ch0_DataStart-rc_Ch0(a1),a6
+        move.l      rc_Ch0_DataStart-rc_Ch0(a2),a6
         bra         .readNote
 
 .lookBack:
-        move.l      rc_Ch0_BufferReadPtr-rc_Ch0(a1),a5          ;current buffer read ptr
-        cmpa.l      rc_Ch0_BufferEnd-rc_Ch0(a1),a5              ;check if we need to wrap around
+        move.l      rc_Ch0_BufferReadPtr-rc_Ch0(a2),a5          ;current buffer read ptr
+        cmpa.l      rc_Ch0_BufferEnd-rc_Ch0(a2),a5              ;check if we need to wrap around
         bne.s       .noWrap       
        
-        move.l      rc_Ch0_BufferStart-rc_Ch0(a1),a5            ;wrap back around to the beginning of the buffer
+        move.l      rc_Ch0_BufferStart-rc_Ch0(a2),a5            ;wrap back around to the beginning of the buffer
 .noWrap:
         move.l      (a5)+,d1
-        subq.w      #1,rc_Ch0_ReadLength-rc_Ch0(a1)
-        move.l      a5,rc_Ch0_BufferReadPtr-rc_Ch0(a1)
+        subq.w      #1,rc_Ch0_ReadLength-rc_Ch0(a2)
+        move.l      a5,rc_Ch0_BufferReadPtr-rc_Ch0(a2)
         bra         .processNote
 
 .wrapBuffer:
-        sub.l       (rc_Ch0_BufferStart-rc_Ch0)(a1),d1
-        add.l       (rc_Ch0_BufferEnd-rc_Ch0)(a1),d1
+        sub.l       (rc_Ch0_BufferStart-rc_Ch0)(a2),d1
+        add.l       (rc_Ch0_BufferEnd-rc_Ch0)(a2),d1
 
-        move.l      d1,(rc_Ch0_BufferReadPtr-rc_Ch0)(a1)        ;store new read ptr
+        move.l      d1,(rc_Ch0_BufferReadPtr-rc_Ch0)(a2)        ;store new read ptr
         bra         .getNextNote
 
 rc_Music2:
-        IFNE        opt_RASTER&~opt_CIA
+        IFNE        opt_RASTER
         move.w      #$f00,$180(a0)
         ENDC
 
         IFNE        opt_CIA
-        lea         rc_Music3(pc),a0
-        lea         rc_Vars(pc),a2  
-        move.l      a0,rc_ReplayPtr-rc_Vars(a2)
+        movem       d4-d6/a2,-(sp)
         move.w      #DMADelay2,d0
         bsr.w       rc_setTimer        
         ENDC
@@ -417,28 +444,28 @@ rc_Music2:
         bgt.s       .rasterWait1    
         ENDC   
 
-        IFNE        opt_RASTER&~opt_CIA
+        IFNE        opt_RASTER
         move.w      #$fff,$180(a0)
         ENDC
         
         ;poke Paula for all channels 
-        lea         rc_Ch0(pc),a1                               ;channel structure pointer into A1
+        lea         rc_Ch0(pc),a2                               ;channel structure pointer into A1
         moveq       #0,d0                                       ;loop for all channels
-        move.b      rc_NumChannels-rc_Vars(a2),d0
+        move.b      rc_NumChannels-rc_Vars(a1),d0
         moveq       #0,d1
         
 .pokePaula:
-        move.b      rc_AudioOffsets-rc_Vars(a2,d0),d1           ;get audio register offset for current channel (we go last to first)
+        move.b      rc_AudioOffsets-rc_Vars(a1,d0),d1           ;get audio register offset for current channel (we go last to first)
 
         btst        d0,d6				
         beq.s       .noPokePtrs
-        move.l      rc_Ch0_PTR-rc_Ch0(a1),ac_ptr(a0,d1)         ;poke ac_ptr
-        move.w      rc_Ch0_LEN-rc_Ch0(a1),ac_len(a0,d1)         ;poke ac_len
+        move.l      rc_Ch0_PTR-rc_Ch0(a2),ac_ptr(a0,d1)         ;poke ac_ptr
+        move.w      rc_Ch0_LEN-rc_Ch0(a2),ac_len(a0,d1)         ;poke ac_len
 .noPokePtrs:
-        move.w      rc_Ch0_PER-rc_Ch0(a1),ac_per(a0,d1)         ;poke ac_per
-        move.w      rc_Ch0_VOL-rc_Ch0(a1),ac_vol(a0,d1)         ;poke ac_vol
+        move.w      rc_Ch0_PER-rc_Ch0(a2),ac_per(a0,d1)         ;poke ac_per
+        move.w      rc_Ch0_VOL-rc_Ch0(a2),ac_vol(a0,d1)         ;poke ac_vol
 
-        lea         rc_Ch1-rc_Ch0(a1),a1                        ;next channel structure
+        lea         rc_Ch1-rc_Ch0(a2),a2                        ;next channel structure
 
         dbf         d0,.pokePaula
 
@@ -446,19 +473,17 @@ rc_Music2:
         or.w        #$8000,d6
         move.w      d6,dmacon(a0)
 
-        IFNE        opt_RASTER&~opt_CIA
+        IFNE        opt_RASTER
         move.w      #$0f0,$180(a0)
         ENDC
 
         IFNE        opt_CIA
-rc_Music3:
-        lea         rc_Music1(pc),a0
-        lea         rc_Vars(pc),a2  
-        move.l      a0,rc_ReplayPtr-rc_Vars(a2)
-        move.w      rc_TimerValue,d0
-        bsr.w       rc_setTimer 
-        ENDC
-        IFEQ        opt_CIA
+
+        movem       (sp)+,d4-d6/a2
+        rts                                                     ;return from interrupt in CIA mode, next one will trigger the rest of the code
+
+        ELSE
+
         ;wait 1.1 rasterlines here
         move.l      vposr(a0),d2
         and.l       #$1ffff,d2
@@ -468,33 +493,45 @@ rc_Music3:
         and.l       #$1ffff,d3
         cmp.l       d3,d2
         bgt.s       .rasterWait2  
+
         ENDC
 
-        IFNE        opt_RASTER&~opt_CIA
+rc_Music3:
+        IFNE        opt_RASTER
         move.w      #$fff,$180(a0)
         ENDC
 
+        IFNE        opt_CIA
+        movem       d2/d3/a2,-(sp)
+        move.w      rc_TimerValue,d0
+        bsr.w       rc_setTimer 
+        ENDC
+
         ;re-poke the sample pointers for looped sounds
-        lea         rc_Ch0(pc),a1                               ;channel structure pointer into A1   
+        lea         rc_Ch0(pc),a2                               ;channel structure pointer into A1   
         moveq       #0,d0                                       ;loop for all channels
-        move.b      rc_NumChannels-rc_Vars(a2),d0
+        move.b      rc_NumChannels-rc_Vars(a1),d0
 
 .rePokePaula:
-        move.b      rc_AudioOffsets-rc_Vars(a2,d0),d1           ;a2 has ptr to audiooffsets,(we go last to first)
+        move.b      rc_AudioOffsets-rc_Vars(a1,d0),d1           ;a2 has ptr to audiooffsets,(we go last to first)
 
-        move.l      rc_Ch0_PTR_loop-rc_Ch0(a1),ac_ptr(a0,d1)    ;always repoke lthe pointers so we can do wavetable stuff
+        move.l      rc_Ch0_PTR_loop-rc_Ch0(a2),ac_ptr(a0,d1)    ;always repoke lthe pointers so we can do wavetable stuff
                                                                 ;replay code makes sure this doesn't change if not needes, so we can safely do this
  
-        move.w      rc_Ch0_LEN_loop-rc_Ch0(a1),ac_len(a0,d1)    ;poke ac_len
-        adda.l      #rc_Ch1-rc_Ch0,a1                           ;next channel structure
+        move.w      rc_Ch0_LEN_loop-rc_Ch0(a2),ac_len(a0,d1)    ;poke ac_len
+        lea         rc_Ch1-rc_Ch0(a2),a2                        ;next channel structure
 
         dbf         d0,.rePokePaula 
         
-        ;IFNE        opt_RASTER&~opt_CIA
+        IFNE        opt_RASTER
         move.w      #$05a,$180(a0)
-        ;ENDC
+        ENDC
 
+        IFNE        opt_CIA
+        movem.l     (sp)+,d2/d3/a2
+        ELSE
         movem.l     (sp)+,d0-d6/a0-a6
+        ENDC
         rts                                                     ;all done!
 
 rc_StopMusic:
@@ -569,6 +606,9 @@ rc_AudioOffsets:
 ;CIA player variables - only use if opt_CIA is set to non-zero
         IFNE        opt_CIA
 
+rc_IntSwitch:
+        dc.w        0
+
 rc_CIAName:	
         dc.b        "ciab.resource",0
 rc_CIAResource:	
@@ -583,8 +623,9 @@ rc_CIAServer:
         dc.b        2,127                                       ;type, priority
 rc_IntnamePtr:        
         dc.l        0
+rc_DataPtr:
         dc.l        0
-rc_ReplayPtr:
+rc_CodePtr:
         dc.l        0                                           ;poke playroutine 
 
 rc_IntName:
