@@ -15,6 +15,10 @@ opt_RASTER = 0                                                  ; 1=show rastert
         ENDC
 
         INCLUDE     "Includes/custom.i"
+        IFND        bgColor
+bgColor = $aaa                                                  ; kick 2.0+ background color
+;bgCOlor = $05a                                                 ; kick 1.x background color
+        ENDC
 
 ; amiga PAL clock = 7093789.2 Hz
 ; Paula clock divider - 2 == PAL video clock
@@ -26,7 +30,7 @@ opt_RASTER = 0                                                  ; 1=show rastert
 DMADelay1           = 362
 ; 1.1 scanines = 227 * 1.1 = 250 PAL cycles = 500 CPU cycles
 ; /10 = 50 - CIA timer value for second delay
-DMADelay2           = 50
+DMADelay2           = 100
 
 TotalDMADelay       = DMADelay1+DMADelay2
 
@@ -164,6 +168,7 @@ rc_Init:
 
         rts
         
+        IFNE        opt_CIA
 ; now set timer
 rc_setTimer:
         ;can we use a6 here ???? check in the main routine when processing the tempo command
@@ -183,6 +188,7 @@ rc_setTimer:
         move.b	    d0,ciatblo(a6)
         move.b	    d1,ciatbhi(a6)
         rts
+        ENDC
         
 ; main playroutine, call this every vblank interrupt
 rc_Music:
@@ -217,8 +223,8 @@ rc_Music:
         rts
 
 rc_MusicInterrupt:
-        movem.l     d2-d6/a2-a4,-(sp)
 
+        move.l      a2,-(sp)
         ;jumptable for CIA mode
         lea         rc_JumpTable(pc),a2
         move.w      rc_IntSwitch-rc_Vars(a1),d0
@@ -238,6 +244,8 @@ rc_JumpTable:
         dc.w        rc_Music3-rc_JumpTable
 
 rc_Music1:
+        movem.l     d2-d6/a3/a4,-(sp)
+
         move.w      #DMADelay2,d0
         bsr.w       rc_setTimer
 
@@ -266,6 +274,9 @@ rc_Music1:
         move.l      vposr(a0),d5
         and.l       #$1ffff,d5
         add.l       #$0780,d5
+        
+        ELSE
+        move.w      d6,rc_DmaBitsTemp-rc_Vars(a1)               ;store DMA bits for rc_Music2 if CIA
         ENDC
 
 .readNotes:
@@ -368,12 +379,16 @@ rc_Music1:
 
         move.w      d4,rc_DmaBits-rc_Vars(a1)                   ;store DMA stop flags for next tick
 
+        IFNE        opt_RASTER
+        move.w      #bgColor,$180(a0)
+        ENDC
         ; in vblank mode continue onto the next part of the playrouting
         IFEQ        opt_CIA
         bra.s       rc_Music2
         ;for cia mode return from interrupt, next interrupt should trigger the second part
         ELSE
-        movem       (sp)+,d2-d6/a2-a4                           ;but make sure to restore the registers when returning from interrupt
+        movem.l     (sp)+,d2-d6/a3/a4                           ;but make sure to restore the registers when returning from interrupt
+        move.l      (sp)+,a2                                    ;also restore a2 which gets stored at the top of the interrupt dispatcher
         rts
         ENDC
 
@@ -426,13 +441,11 @@ rc_Music1:
         bra         .getNextNote
 
 rc_Music2:
-        IFNE        opt_RASTER
-        move.w      #$f00,$180(a0)
-        ENDC
+
 
         IFNE        opt_CIA
-        movem       d4-d6/a2,-(sp)
-        move.w      #DMADelay2,d0
+        movem.l     d4-d6,-(sp)
+        move.w      rc_TimerValue-rc_Vars(a1),d0
         bsr.w       rc_setTimer        
         ENDC
 
@@ -454,6 +467,10 @@ rc_Music2:
         move.b      rc_NumChannels-rc_Vars(a1),d0
         moveq       #0,d1
         
+        IFNE        opt_CIA
+        move.w      rc_DmaBitsTemp-rc_Vars(a1),d6               ;if CIA timing we need to reload DMA bits into D6 coz it might be trashed outside the interrupt
+        ENDC                                                    ;for vblank it will stay loaded from the first part of the routine
+
 .pokePaula:
         move.b      rc_AudioOffsets-rc_Vars(a1,d0),d1           ;get audio register offset for current channel (we go last to first)
 
@@ -474,12 +491,12 @@ rc_Music2:
         move.w      d6,dmacon(a0)
 
         IFNE        opt_RASTER
-        move.w      #$0f0,$180(a0)
+        move.w      #bgColor,$180(a0)
         ENDC
 
         IFNE        opt_CIA
 
-        movem       (sp)+,d4-d6/a2
+        movem.l     (sp)+,d4-d6/a2                              ;also restore A2 which was stored in the interrupt dispatcher
         rts                                                     ;return from interrupt in CIA mode, next one will trigger the rest of the code
 
         ELSE
@@ -502,8 +519,8 @@ rc_Music3:
         ENDC
 
         IFNE        opt_CIA
-        movem       d2/d3/a2,-(sp)
-        move.w      rc_TimerValue,d0
+        movem.l     d2/d3,-(sp)
+        move.w      #DMADelay1,d0
         bsr.w       rc_setTimer 
         ENDC
 
@@ -524,11 +541,11 @@ rc_Music3:
         dbf         d0,.rePokePaula 
         
         IFNE        opt_RASTER
-        move.w      #$05a,$180(a0)
+        move.w      #bgColor,$180(a0)
         ENDC
 
         IFNE        opt_CIA
-        movem.l     (sp)+,d2/d3/a2
+        movem.l     (sp)+,d2/d3/a2                              ;also restore A2 which was stored in the interrupt dispatcher
         ELSE
         movem.l     (sp)+,d0-d6/a0-a6
         ENDC
@@ -593,6 +610,10 @@ rc_Compress:
 
 rc_DmaBits:
         dc.w        0
+        IFNE        opt_CIA
+rc_DmaBitsTemp:
+        dc.w        0
+        ENDC
 
 rc_SampleOffsetTable:
         dc.l        0        
