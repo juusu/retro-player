@@ -113,15 +113,15 @@ rc_Init:
         lea         rc_Ch0(pc),a1                               ;go back from 1st channel        
 .bufferLoop:
         moveq       #0,d0
-        move.w      (a0)+,d0                                    ;buffer length
+        move.w      (a0),d0                                    ;buffer length
 
         sne         rc_Compress-rc_Vars(a2)                     ;set compression used flag if either buffer length is non-zero
         beq.s       .noCompress                                 ;but if it's zero skip the rest ...
 
         move.l      a0,rc_Ch0_BufferStart-rc_Ch0(a1)            ;store buffer start
         move.l      a0,rc_Ch0_BufferWritePtr-rc_Ch0(a1)         ;store buffer write pointer
-        asl         #2,d1                                       ;length is in longwords - convert to bytes
-        adda.l      d1,a0                                       ;calculate next channel's buffer location
+        asl         #2,d0                                       ;length is in longwords - convert to bytes
+        adda.l      d0,a0                                       ;calculate next channel's buffer location
         move.l      a0,rc_Ch0_BufferEnd-rc_Ch0(a1)              ;store buffer end
 
         lea         rc_Ch1-rc_Ch0(a1),a1                        ;next channel structure
