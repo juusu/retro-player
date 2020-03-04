@@ -68,10 +68,11 @@ rc_Init:
         ENDC
 
         lea         rc_Ch0(pc),a1                               ;channel var pointer
-        lea         rc_Vars(pc),a2                              ;var block pointer
-        moveq       #0,d0                                       ;number of channels
+
+        moveq       #0,d2                                       ;number of channels
 .loopStart:
         move.l      a0,rc_Ch0_DataStart-rc_Ch0(a1)              ;store beginning of ch0 pattern data
+        move.l      a0,rc_Ch0_DataRestart-rc_Ch0(a1)            ;init resetart ptr to the beginning of pattern data as well
         move.l      a0,rc_Ch0_DataPtr-rc_Ch0(a1)                ;also init the current note pointer to the same place
 
 .innerLoop:
@@ -80,17 +81,23 @@ rc_Init:
         bne.s       .innerLoop                                  ;no? read on ...
 
         subq.l      #2,a0
+
+        move.l      (a0)+,d0                                    ;restart offset
+        asl.l       #2,d0                                       ;offset is in longwords
+        add.l       d0,rc_Ch0_DataRestart-rc_Ch0(a1)            ;add offset to beginning of data
+
         cmp.w       #$ffff,(a0)+                                ;check if this was the last channel ?
         beq.s       .noteLoopEnd                                ;yeah, exit loop!
 
         lea         rc_Ch1-rc_Ch0(a1),a1                        ;no? next channel structure
-        addq.b      #1,d0                                       ;moar channels
+        addq.b      #1,d2                                       ;moar channels
         subq.l      #2,a0                                       ;rewind pointer one place b/c it wasn't a marker
       
         bra.s       .loopStart            
 
 .noteLoopEnd:
-        move.b      d0,rc_NumChannels-rc_Vars(a2)               ;store for later
+        lea         rc_Vars(pc),a2                              ;var block pointer
+        move.b      d2,rc_NumChannels-rc_Vars(a2)               ;store for later
         move.w      (a0)+,rc_DmaBits-rc_Vars(a2)                ;get initial state of DMACON for this mod
         move.l      a0,rc_SampleOffsetTable-rc_Vars(a2)         ;store pointer to sample offset table
 
@@ -101,11 +108,13 @@ rc_Init:
         bra.s       .loop
 
 .sampleLoopEnd:
-        ;d0 still has number of channels, no need to load
+        ;d2 still has number of channels, no need to load
+        move.l      4.w,a6                                      ;execbase
         lea         rc_Ch0(pc),a1                               ;go back from 1st channel        
 .bufferLoop:
-        moveq       #0,d1
-        move.w      (a0),d1                                     ;buffer length
+        moveq       #0,d0
+        move.w      (a0)+,d0                                    ;buffer length
+
         sne         rc_Compress-rc_Vars(a2)                     ;set compression used flag if either buffer length is non-zero
         beq.s       .noCompress                                 ;but if it's zero skip the rest ...
 
@@ -116,7 +125,7 @@ rc_Init:
         move.l      a0,rc_Ch0_BufferEnd-rc_Ch0(a1)              ;store buffer end
 
         lea         rc_Ch1-rc_Ch0(a1),a1                        ;next channel structure
-        dbf         d0,.bufferLoop
+        dbf         d2,.bufferLoop
 
 .noCompress:
         move.l      a0,rc_SampleStart-rc_Vars(a2)               ;store sample pointer
@@ -126,8 +135,8 @@ rc_Init:
 .setupCIA:
         lea	    rc_CIAName-rc_Vars(a2),a1                   ;a1 was ch0 ptr - no longer needed as we already initialized the ch structures
                                                                 ;put ptr to cia resource name in there
-        move.l      4.w,a6                                      ;execbase
-        jsr         OpenResource(a6)                            ;d0-d1/a0-a1 are scratch registers for system calls
+
+        jsr         OpenResource(a6)                            ;d0-d1/a0-a1 are scratch registers for system calls (a6 still has execbase)
         move.l      d0,rc_CIAResource-rc_Vars(a2)               ;store CIA resource pointer
         beq.s	    .return                                     ;exit if OpenResource failed  
 
@@ -417,8 +426,8 @@ rc_Music1:
         bra         .getNextNote
 
 .channelEnd:
-        ;go back to beginning of channel data
-        move.l      rc_Ch0_DataStart-rc_Ch0(a2),a6
+        ;rewind channel data to the restart pointer
+        move.l      rc_Ch0_DataRestart-rc_Ch0(a2),a6
         bra         .readNote
 
 .lookBack:
@@ -637,7 +646,8 @@ rc_CIAResource:
 rc_CIATimer:
         dc.w        0
 rc_TimerValue:	
-        dc.w        $376c-TotalDMADelay                         ;125 bpm
+        ;dc.w        $376c-TotalDMADelay                         ;125 bpm
+        dc.w        $2b4c-TotalDMADelay                         ;160 bpm
 
 rc_CIAServer:
         dc.l        0,0
@@ -657,6 +667,8 @@ rc_IntName:
 
 rc_Ch0:
 rc_Ch0_DataStart:
+        dc.l        0
+rc_Ch0_DataRestart:
         dc.l        0
 rc_Ch0_DataPtr:
         dc.l        0
@@ -692,6 +704,8 @@ rc_Ch0_VOL:
 rc_Ch1:
 rc_Ch1_DataStart:
         dc.l        0
+rc_Ch1_DataRestart:
+        dc.l        0
 rc_Ch1_DataPtr:
         dc.l        0       
 
@@ -726,6 +740,8 @@ rc_Ch1_VOL:
 rc_Ch2:
 rc_Ch2_DataStart:
         dc.l        0
+rc_Ch2_DataRestart:
+        dc.l        0
 rc_Ch2_DataPtr:
         dc.l        0
 
@@ -759,6 +775,8 @@ rc_Ch2_VOL:
 
 rc_Ch3:
 rc_Ch3_DataStart:
+        dc.l        0
+rc_Ch3_DataRestart:
         dc.l        0
 rc_Ch3_DataPtr:
         dc.w        0
