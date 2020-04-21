@@ -59,13 +59,13 @@ ciacra	            =	 $E00
 ciacrb	            =	 $F00
         ENDC
 
+; other LVO's
+AllocMem            =    -198
+FreeMem             =    -210
+
 ; put pointer to mod data in A0 and call rc_Init
 rc_Init:
-        IFNE        opt_CIA
         movem.l     d0-d2/a1-a2/a6,-(sp)
-        ELSE
-        movem.l     d0-d1/a1-a2,-(sp)
-        ENDC
 
         lea         rc_Ch0(pc),a1                               ;channel var pointer
 
@@ -111,25 +111,51 @@ rc_Init:
         ;d2 still has number of channels, no need to load
         move.l      4.w,a6                                      ;execbase
         lea         rc_Ch0(pc),a1                               ;go back from 1st channel        
-.bufferLoop:
+        
         moveq       #0,d0
-        move.w      (a0),d0                                    ;buffer length
+.bufferLoop:
+        moveq       #0,d1
+        
+        move.w      (a0)+,d1                                    ;read buffer length
 
         sne         rc_Compress-rc_Vars(a2)                     ;set compression used flag if either buffer length is non-zero
         beq.s       .noCompress                                 ;but if it's zero skip the rest ...
 
-        move.l      a0,rc_Ch0_BufferStart-rc_Ch0(a1)            ;store buffer start
-        move.l      a0,rc_Ch0_BufferWritePtr-rc_Ch0(a1)         ;store buffer write pointer
-        asl         #2,d0                                       ;length is in longwords - convert to bytes
-        adda.l      d0,a0                                       ;calculate next channel's buffer location
-        move.l      a0,rc_Ch0_BufferEnd-rc_Ch0(a1)              ;store buffer end
+        move.l      d0,rc_Ch0_BufferStart-rc_Ch0(a1)            ;store buffer start
+        move.l      d0,rc_Ch0_BufferWritePtr-rc_Ch0(a1)         ;store buffer write pointer
+
+        asl         #2,d1                                       ;length is in longwords - convert to bytes
+        add.l       d1,d0                                       ;keep track of total amount of mem needed for buffer in d0
+
+        move.l      d0,rc_Ch0_BufferEnd-rc_Ch0(a1)              ;store buffer end
 
         lea         rc_Ch1-rc_Ch0(a1),a1                        ;next channel structure
         dbf         d2,.bufferLoop
 
+        move.l      a0,rc_SampleStart-rc_Vars(a2)               ;store sample pointer
+        move.l      d0,rc_BufferSize-rc_Vars(a2)                ;store size of decompression buffer
+
+        ;try to alloc memory
+        moveq       #0,d1                                       ;MEMF_ANY
+        jsr         AllocMem(a6) 
+        move.l      d0,rc_BufferPtr-rc_Vars(a2)                 ;store ptr to decompression buffer
+
+        moveq       #0,d2                                       ;loop for all channels
+        move.b      rc_NumChannels-rc_Vars(a2),d2
+        lea         rc_Ch0(pc),a1                               ;go back from 1st channel 
+.updatePtrs:
+        ; add offset to the allocated memory buffer to all the buffer ptrs
+        add.l       d0,rc_Ch0_BufferStart-rc_Ch0(a1)
+        add.l       d0,rc_Ch0_BufferWritePtr-rc_Ch0(a1)
+        add.l       d0,rc_Ch0_BufferEnd-rc_Ch0(a1) 
+        lea         rc_Ch1-rc_Ch0(a1),a1                        ;next channel structure
+        dbf         d2,.updatePtrs
+        bra.s       .compress
+
 .noCompress:
         move.l      a0,rc_SampleStart-rc_Vars(a2)               ;store sample pointer
 
+.compress:
         ; CIA interrupt setup starts here
         IFNE        opt_CIA
 .setupCIA:
@@ -170,10 +196,8 @@ rc_Init:
         bsr.s       rc_setTimer                                 ;and set it
         move.w      #2,rc_IntSwitch-rc_Vars(a2)                 ;init jumptable position
 .return:
-        movem.l     (sp)+,d0-d2/a1-a2/a6
-        ELSE
-        movem.l     (sp)+,d0-d1/a1-a2
         ENDC
+        movem.l     (sp)+,d0-d2/a1-a2/a6
 
         rts
         
@@ -592,17 +616,23 @@ rc_StopMusic:
 
         ELSE
 
-        move.l      a0,-(sp)
+        movem.l     d0-d1/a0-a1/a6,-(sp)
         
         ENDC
 
-        lea         _custom,a0
-        move.w	    #$000f,dmacon(a0)
+        lea         _custom,a1
+        move.w	    #$000f,dmacon(a1)
+
+        ;free decompression buffer memory
+        move.l      4.w,a6                                      ;execbase
+        move.l      rc_BufferSize(pc),d0
+        move.l      rc_BufferPtr(pc),a1
+        jsr         FreeMem(a6)
 
         IFNE        opt_CIA
-        movem.l     (sp)+,d0/a1/a4-a6
+        movem.l     (sp)+,d0-d1/a0-a1/a4-a6
         ELSE
-        movem.l     (sp)+,a0
+        movem.l     (sp)+,d0-d1/a0-a1/a6
         ENDC
 
         rts
@@ -616,6 +646,12 @@ rc_NumChannels:
 rc_Compress:
         dc.b        0
         EVEN
+
+; decompression buffer location and size (to be able to free it on exit)
+rc_BufferSize:
+        dc.l        0
+rc_BufferPtr:
+        dc.l        0
 
 rc_DmaBits:
         dc.w        0
