@@ -475,7 +475,6 @@ rc_Music1:
 
 rc_Music2:
 
-
         IFNE        opt_CIA
         movem.l     d4-d6,-(sp)
         move.w      rc_TimerValue-rc_Vars(a1),d0

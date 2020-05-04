@@ -1,7 +1,6 @@
 /build/**
 /.vscode/**
 /fs-uae/**
-*.nmod
-*.rm
+*.rcm
 *.exe
 *.code-workspace

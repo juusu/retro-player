@@ -9,6 +9,8 @@ opt_CIA = 0
 	lea		mod_Module,a0
 	jsr		rc_Init
 
+	bset.b  #1,$bfe001          ;turn off led filter
+
 	;call rc_Music every frame
 waitras1:
 	move.l   $dff004,d0
@@ -42,4 +44,4 @@ waitras2:
 	SECTION data,DATA_C
 
 mod_Module:
-	INCBIN "converted.nmod"
+	INCBIN "marchin.rcm"
