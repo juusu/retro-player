@@ -3,6 +3,13 @@
 ; ** override them from your code before including the       **
 ; ++ replay routine and it will back away ...                **
 ; *************************************************************
+        IFND        opt_USECODE
+opt_USECODE = 1
+        ENDC
+
+bit_TEMPO = 0
+bit_FILTER = 1
+bit_SYNC = 2
 
         IFND        opt_CIA
 opt_CIA = 1                                                     ; 1=use CIA timer for playback, 0=use vBlank
@@ -259,7 +266,7 @@ rc_MusicInterrupt:
 
         move.l      a2,-(sp)
         ;jumptable for CIA mode
-        lea         rc_JumpTable(pc),a2
+        lea         rc_CiaJumpTable(pc),a2
         move.w      rc_IntSwitch-rc_Vars(a1),d0
         add.w       #1,d0
         cmpi.w      #3,d0
@@ -268,13 +275,13 @@ rc_MusicInterrupt:
 .noOverflow:
         move.w      d0,rc_IntSwitch-rc_Vars(a1)                 ;save next position
         add.w       d0,d0                                       ;jumptable is words
-        move.w      rc_JumpTable(pc,d0.w),d0                    ;get offset from jumptable
-        jmp         rc_JumpTable(pc,d0.w)
+        move.w      rc_CiaJumpTable(pc,d0.w),d0                 ;get offset from jumptable
+        jmp         rc_CiaJumpTable(pc,d0.w)
 
-rc_JumpTable:
-        dc.w        rc_Music1-rc_JumpTable
-        dc.w        rc_Music2-rc_JumpTable
-        dc.w        rc_Music3-rc_JumpTable
+rc_CiaJumpTable:
+        dc.w        rc_Music1-rc_CiaJumpTable
+        dc.w        rc_Music2-rc_CiaJumpTable
+        dc.w        rc_Music3-rc_CiaJumpTable
 
 rc_Music1:
         movem.l     d2-d6/a3/a4,-(sp)
@@ -429,7 +436,12 @@ rc_Music1:
         cmpi.l      #$ffff0000,d1                               ;is it the end of channel data?
         bge.s       .channelEnd
         
-        ; process control commands here
+        IFNE        opt_USECODE
+        cmpi.l      #$c0007fff,d1                               ;is it a player control command?
+        ble.s       .playerCommand 
+        ENDC 
+
+        ; not a player command - compression ...
         ; compression lookback only at this time
         move.l      d1,d2
         and.w       #$7fff,d1                                   ;read length is in d1
@@ -473,8 +485,56 @@ rc_Music1:
         move.l      d1,(rc_Ch0_BufferReadPtr-rc_Ch0)(a2)        ;store new read ptr
         bra         .getNextNote
 
-rc_Music2:
+        IFNE        opt_USECODE
+.playerCommand:
+        move.w      d1,d2                                       ;low 15 bits is player command
+        and.w       #$0fff,d2                                   ;d2 is command param
+        rol.w       #4,d1                                       
+        and.w       #7,d1                                       ;d1 is the command  
 
+        ; command jumptable
+        ; TODO jumptable code (copy from above)
+
+.cmdJumpTable:
+        IFNE        opt_USECODE&1<<bit_TEMPO
+        dc.w        .setTempo-.cmdJumpTable
+        ELSE
+        dc.w        .getNextNote-.cmdJumpTable
+        ENDC
+        
+        IFNE        opt_USECODE&1<<bit_FILTER        
+        dc.w        .setFilter-.cmdJumpTable
+        ELSE
+        dc.w        .getNextNote-.cmdJumpTable
+        ENDC
+        
+        IFNE        opt_USECODE&1<<bit_SYNC
+        dc.w        .emitSync-.cmdJumpTable
+        ; no need to pad the last command jumptable entry if not used, 
+        ; as no other command will try to look past this spot in the 
+        ; jumptable
+        ENDC
+        
+        ENDC
+
+        IFNE        opt_USECODE&1<<bit_TEMPO
+.setTempo:
+        move.l      rc_CIAMagicNumber-rc_Vars(a1),d1
+        divu        d2,d1
+        sub.l       #TotalDMADelay,d1
+        move.w      d1,rc_TimerValue-rc_Vars(a1)                ;store the new timer value      
+        bra         .getNextNote                                ;end
+        ENDC
+        IFNE        opt_USECODE&1<<bit_FILTER
+.setFilter:
+        bra         .getNextNote                                ;end
+        ENDC
+        IFNE        opt_USECODE&1<<bit_SYNC
+.emitSync:
+        bra         .getNextNote                                ;end
+        ENDC                
+
+rc_Music2:
         IFNE        opt_CIA
         movem.l     d4-d6,-(sp)
         move.w      rc_TimerValue-rc_Vars(a1),d0
@@ -586,7 +646,7 @@ rc_Music3:
 rc_StopMusic:
         IFNE        opt_CIA
          
-        movem.l     d0/a1/a4-a6,-(sp)
+        movem.l     d0-d1/a0-a1/a4-a6,-(sp)
         lea         rc_Vars(pc),a4                              ;pointer to vars block 
         move.l      rc_CIAResource(pc),a6                       ;ciab.resource
         lea         $bfd000,a5                                  ;CIA B
@@ -680,8 +740,11 @@ rc_CIAResource:
         dc.l        0
 rc_CIATimer:
         dc.w        0
+rc_CIAMagicNumber:
+        dc.l        1773448                                     ;PAL
+        ;dc.l       1789773                                     ;NTSC
 rc_TimerValue:	
-        ;dc.w        $376c-TotalDMADelay                         ;125 bpm
+        ;dc.w        $376c-TotalDMADelay                        ;125 bpm
         dc.w        $2b4c-TotalDMADelay                         ;160 bpm
 
 rc_CIAServer:
