@@ -106,6 +106,21 @@ rc_Init:
         lea         rc_Vars(pc),a2                              ;var block pointer
         move.b      d2,rc_NumChannels-rc_Vars(a2)               ;store for later
         move.w      (a0)+,rc_DmaBits-rc_Vars(a2)                ;get initial state of DMACON for this mod
+
+        move.w      (a0)+,d0                                    ;get initial tempo
+
+        IFNE        opt_CIA
+        move.b      d0,d1 
+        and.w       #$ff,d1                                     ;d1 is bpm
+        asr.w       #8,d0                                       ;d0 is multiplier
+        addq        #1,d0
+        mulu        d1,d0
+        move.l      rc_CIAMagicNumber-rc_Vars(a2),d1
+        divu        d0,d1
+        sub.l       #TotalDMADelay,d1
+        move.w      d1,rc_TimerValue-rc_Vars(a2)
+        ENDC
+
         move.l      a0,rc_SampleOffsetTable-rc_Vars(a2)         ;store pointer to sample offset table
 
 .loop:
@@ -263,10 +278,8 @@ rc_Music:
         rts
 
 rc_MusicInterrupt:
-
         move.l      a2,-(sp)
         ;jumptable for CIA mode
-        lea         rc_CiaJumpTable(pc),a2
         move.w      rc_IntSwitch-rc_Vars(a1),d0
         add.w       #1,d0
         cmpi.w      #3,d0
@@ -424,7 +437,7 @@ rc_Music1:
         ENDC
         ; in vblank mode continue onto the next part of the playrouting
         IFEQ        opt_CIA
-        bra.s       rc_Music2
+        bra         rc_Music2
         ;for cia mode return from interrupt, next interrupt should trigger the second part
         ELSE
         movem.l     (sp)+,d2-d6/a3/a4                           ;but make sure to restore the registers when returning from interrupt
@@ -493,10 +506,12 @@ rc_Music1:
         and.w       #7,d1                                       ;d1 is the command  
 
         ; command jumptable
-        ; TODO jumptable code (copy from above)
+        add.w       d1,d1                                       ;jumptable is words
+        move.w      .cmdJumpTable(pc,d1.w),d1                   ;get offset from jumptable
+        jmp         .cmdJumpTable(pc,d1.w)
 
 .cmdJumpTable:
-        IFNE        opt_USECODE&1<<bit_TEMPO
+        IFNE        (opt_USECODE&1<<bit_TEMPO)&&opt_CIA
         dc.w        .setTempo-.cmdJumpTable
         ELSE
         dc.w        .getNextNote-.cmdJumpTable
@@ -517,7 +532,7 @@ rc_Music1:
         
         ENDC
 
-        IFNE        opt_USECODE&1<<bit_TEMPO
+        IFNE        (opt_USECODE&1<<bit_TEMPO)&&opt_CIA
 .setTempo:
         move.l      rc_CIAMagicNumber-rc_Vars(a1),d1
         divu        d2,d1
