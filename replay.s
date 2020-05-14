@@ -107,18 +107,19 @@ rc_Init:
         move.b      d2,rc_NumChannels-rc_Vars(a2)               ;store for later
         move.w      (a0)+,rc_DmaBits-rc_Vars(a2)                ;get initial state of DMACON for this mod
 
-        move.w      (a0)+,d0                                    ;get initial tempo
-
         IFNE        opt_CIA
-        move.b      d0,d1 
-        and.w       #$ff,d1                                     ;d1 is bpm
-        asr.w       #8,d0                                       ;d0 is multiplier
-        addq        #1,d0
-        mulu        d1,d0
-        move.l      rc_CIAMagicNumber-rc_Vars(a2),d1
-        divu        d0,d1
-        sub.l       #TotalDMADelay,d1
-        move.w      d1,rc_TimerValue-rc_Vars(a2)
+
+        move.w      (a0)+,d0                                    ;get initial tempo
+        ;this might take some explaining
+        ;we keep the vars pointer in init in a2 because of the subsequent OS calls which
+        ;will trash a1 HOWEVER, the main routine keeps it in A1 because the interrupt handler is
+        ;nice enough to put it there for us when in CIA mode
+        ;therefore rc_setTempo expects it in A1 and we can't have it there all the time because
+        ;the below calls to AllocMem and OpenResource would trash it and we still need it afterwards
+        movea.l     a2,a1   
+        bsr         rc_setTempo                                  
+        ELSE
+        addq        #2,a0                                       ;skip initial tempo in vblank mode
         ENDC
 
         move.l      a0,rc_SampleOffsetTable-rc_Vars(a2)         ;store pointer to sample offset table
@@ -333,8 +334,8 @@ rc_Music1:
         ENDC
 
 .readNotes:
-        moveq       #0,d0                                       ;loop for all channels
-        move.b      rc_NumChannels-rc_Vars(a1),d0
+        moveq       #0,d2                                       ;loop for all channels
+        move.b      rc_NumChannels-rc_Vars(a1),d2
 
         moveq       #0,d4                                       ;init DMA bits
 .loop:
@@ -366,38 +367,38 @@ rc_Music1:
 
 .processVolume
         ;process volume
-        move.l      d1,d2                                       ;transfer to d2 to extract volume
-        rol.l       #7,d2                                       ;rotate to beginning of register
-        and.w       #$7F,d2                                     ;mask unnecessary bits
-        move.w      d2,rc_Ch0_VOL-rc_Ch0(a2)                    ;store the volume
+        move.l      d1,d0                                       ;transfer to d0 to extract volume
+        rol.l       #7,d0                                       ;rotate to beginning of register
+        and.w       #$7F,d0                                     ;mask unnecessary bits
+        move.w      d0,rc_Ch0_VOL-rc_Ch0(a2)                    ;store the volume
 
         btst        #23,d1
         beq.s       .noStopDma
-        bset        d0,d4                                       ;store that we need to stop DMA in order to trigger a new note
+        bset        d2,d4                                       ;store that we need to stop DMA in order to trigger a new note
 .noStopDma:
 
         btst        #24,d1                                      ;check format of instruction
         beq.s       .noNewNote
 
 .newNote:
-        move.l      d1,d2
+        move.l      d1,d0
         moveq       #10,d3                                      ;d3 is shift amount (greater than 7 can't use immediate addressing)
-        ror.l       d3,d2                                       ;d3 is free now
-        and.w       #$1FFF,d2
+        ror.l       d3,d0                                       ;d3 is free now
+        and.w       #$1FFF,d0
         beq.s       .noPointerChange
-        sub.w       #1,d2
-        mulu.w      #OFFSET_TABLE_SIZE,d2
+        sub.w       #1,d0
+        mulu.w      #OFFSET_TABLE_SIZE,d0
 
         ; copy values from sample offset table to channel vars
-        move.l      offs_Sample_Start(a3,d2),a5
+        move.l      offs_Sample_Start(a3,d0),a5
         adda.l      a4,a5
         move.l      a5,rc_Ch0_PTR-rc_Ch0(a2)
-        move.l      offs_Loop_Start(a3,d2),a5
+        move.l      offs_Loop_Start(a3,d0),a5
         adda.l      a4,a5        
         move.l      a5,rc_Ch0_PTR_loop-rc_Ch0(a2)
         
-        move.w      offs_Sample_Length(a3,d2),rc_Ch0_LEN-rc_Ch0(a2)
-        move.w      offs_Loop_Length(a3,d2),rc_Ch0_LEN_loop-rc_Ch0(a2)
+        move.w      offs_Sample_Length(a3,d0),rc_Ch0_LEN-rc_Ch0(a2)
+        move.w      offs_Loop_Length(a3,d0),rc_Ch0_LEN_loop-rc_Ch0(a2)
 
 .noPointerChange:
         and.w       #$3ff,d1
@@ -406,13 +407,13 @@ rc_Music1:
 
 .noNewNote:
         ;process sample offset
-        move.l      d1,d2
-        ror.l       #8,d2        
-        and.l       #$7fff,d2      
+        move.l      d1,d0
+        ror.l       #8,d0        
+        and.l       #$7fff,d0      
         beq.s       .noPointerChange2
 
         move.l      (rc_Ch0_PTR_loop-rc_Ch0)(a2),d3             ;get old pointer value
-        add.l       d2,d3                                       ;add offset
+        add.l       d0,d3                                       ;add offset
         move.l      d3,(rc_Ch0_PTR_loop-rc_Ch0)(a2)             ;store it back for later
 
 .noPointerChange2:
@@ -428,7 +429,7 @@ rc_Music1:
 .nextChannel:
 
         lea         rc_Ch1-rc_Ch0(a2),a2                        ;next channel structure
-        dbf         d0,.loop
+        dbf         d2,.loop
 
         move.w      d4,rc_DmaBits-rc_Vars(a1)                   ;store DMA stop flags for next tick
 
@@ -447,26 +448,26 @@ rc_Music1:
 
 .controlWord:
         cmpi.l      #$ffff0000,d1                               ;is it the end of channel data?
-        bge.s       .channelEnd
+        bhs.s       .channelEnd
         
         IFNE        opt_USECODE
         cmpi.l      #$c0007fff,d1                               ;is it a player control command?
-        ble.s       .playerCommand 
+        bls.s       .playerCommand 
         ENDC 
 
         ; not a player command - compression ...
         ; compression lookback only at this time
-        move.l      d1,d2
+        move.l      d1,d0
         and.w       #$7fff,d1                                   ;read length is in d1
         move.w      d1,(rc_Ch0_ReadLength-rc_Ch0)(a2)           ;store it
-        asl.l       #1,d2
-        and.l       #$7fff0000,d2
-        swap        d2                                          ;read offset is in d2
-        add.w       d2,d2                                       ;offset is in longwords
-        add.w       d2,d2
+        asl.l       #1,d0
+        and.l       #$7fff0000,d0
+        swap        d0                                          ;read offset is in d0
+        add.w       d0,d0                                       ;offset is in longwords
+        add.w       d0,d0
 
         move.l      (rc_Ch0_BufferWritePtr-rc_Ch0)(a2),d1       ;get end of buffer
-        sub.l       d2,d1
+        sub.l       d0,d1
 
         cmp.l       (rc_Ch0_BufferStart-rc_Ch0)(a2),d1          ;check for wrap
         blt.s       .wrapBuffer
@@ -500,31 +501,33 @@ rc_Music1:
 
         IFNE        opt_USECODE
 .playerCommand:
-        move.w      d1,d2                                       ;low 15 bits is player command
-        and.w       #$0fff,d2                                   ;d2 is command param
+        move.w      d1,d0                                       ;low 15 bits is player command
+        and.w       #$0fff,d0                                   ;d0 is command param
         rol.w       #4,d1                                       
         and.w       #7,d1                                       ;d1 is the command  
 
         ; command jumptable
         add.w       d1,d1                                       ;jumptable is words
         move.w      .cmdJumpTable(pc,d1.w),d1                   ;get offset from jumptable
-        jmp         .cmdJumpTable(pc,d1.w)
+        jsr         .cmdJumpTable(pc,d1.w)
+.nopCmd:
+        rts
 
 .cmdJumpTable:
         IFNE        (opt_USECODE&1<<bit_TEMPO)&&opt_CIA
-        dc.w        .setTempo-.cmdJumpTable
+        dc.w        rc_setTempo-.cmdJumpTable
         ELSE
-        dc.w        .getNextNote-.cmdJumpTable
+        dc.w        .nopCmd-.cmdJumpTable
         ENDC
         
         IFNE        opt_USECODE&1<<bit_FILTER        
         dc.w        .setFilter-.cmdJumpTable
         ELSE
-        dc.w        .getNextNote-.cmdJumpTable
+        dc.w        .nopCmd-.cmdJumpTable
         ENDC
         
         IFNE        opt_USECODE&1<<bit_SYNC
-        dc.w        .emitSync-.cmdJumpTable
+        dc.w        .nopCmd-.cmdJumpTable
         ; no need to pad the last command jumptable entry if not used, 
         ; as no other command will try to look past this spot in the 
         ; jumptable
@@ -532,21 +535,33 @@ rc_Music1:
         
         ENDC
 
-        IFNE        (opt_USECODE&1<<bit_TEMPO)&&opt_CIA
-.setTempo:
+        ;we need this for CIA tempo init even if there are no tempo change commands
+        IFNE        opt_CIA
+rc_setTempo:
+        move.b      d0,d1 
+        and.w       #$ff,d1                                     ;d1 is bpm
+        asr.w       #8,d0                                       ;d0 is multiplier
+        addq        #1,d0
+        mulu        d1,d0
         move.l      rc_CIAMagicNumber-rc_Vars(a1),d1
-        divu        d2,d1
+        divu        d0,d1
         sub.l       #TotalDMADelay,d1
-        move.w      d1,rc_TimerValue-rc_Vars(a1)                ;store the new timer value      
-        bra         .getNextNote                                ;end
+        move.w      d1,rc_TimerValue-rc_Vars(a1)
+        rts
+
+        ;move.l      rc_CIAMagicNumber-rc_Vars(a1),d1
+        ;divu        d2,d1
+        ;sub.l       #TotalDMADelay,d1
+        ;move.w      d1,rc_TimerValue-rc_Vars(a1)                ;store the new timer value      
+        ;bra         .getNextNote                                ;end
         ENDC
         IFNE        opt_USECODE&1<<bit_FILTER
 .setFilter:
-        bra         .getNextNote                                ;end
+        rts                                                     ;end
         ENDC
         IFNE        opt_USECODE&1<<bit_SYNC
 .emitSync:
-        bra         .getNextNote                                ;end
+        rts                                                     ;end
         ENDC                
 
 rc_Music2:
