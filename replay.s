@@ -353,17 +353,7 @@ rc_Music1:
 
         ; store note into decompression buffer
 .processNote:
-        tst.b       rc_Compress-rc_Vars(a1)                     ;but only if the mod is actually compressed
-        beq.s       .processVolume
-
-        move.l      rc_Ch0_BufferWritePtr-rc_Ch0(a2),a5         ;read the buffer write pointer
-        cmpa.l      rc_Ch0_BufferEnd-rc_Ch0(a2),a5              ;check if we need to wrap around
-        bne.s       .noWrap2
-
-        move.l      rc_Ch0_BufferStart-rc_Ch0(a2),a5            ;wrap back around to the beginning of the buffer
-.noWrap2:
-        move.l      d1,(a5)+                                    ;store the current note into the buffer
-        move.l      a5,rc_Ch0_BufferWritePtr-rc_Ch0(a2)         ;store the buffer write pointer
+        bsr         .writeBack
 
 .processVolume
         ;process volume
@@ -427,7 +417,6 @@ rc_Music1:
 
 .noPeriodChange:
 .nextChannel:
-
         lea         rc_Ch1-rc_Ch0(a2),a2                        ;next channel structure
         dbf         d2,.loop
 
@@ -446,15 +435,34 @@ rc_Music1:
         rts
         ENDC
 
+.writeBack
+        tst.b       rc_Compress-rc_Vars(a1)                     ;only do this if the mod is actually compressed
+        beq.s       .exit
+
+        move.l      rc_Ch0_BufferWritePtr-rc_Ch0(a2),a5         ;read the buffer write pointer
+        cmpa.l      rc_Ch0_BufferEnd-rc_Ch0(a2),a5              ;check if we need to wrap around
+        bne.s       .noWrap2
+
+        move.l      rc_Ch0_BufferStart-rc_Ch0(a2),a5            ;wrap back around to the beginning of the buffer
+.noWrap2:
+        move.l      d1,(a5)+                                    ;store the current note into the buffer
+        move.l      a5,rc_Ch0_BufferWritePtr-rc_Ch0(a2)         ;store the buffer write pointer
+.exit:
+        rts
+
 .controlWord:
         cmpi.l      #$ffff0000,d1                               ;is it the end of channel data?
         bhs.s       .channelEnd
         
         IFNE        opt_USECODE
         cmpi.l      #$c0007fff,d1                               ;is it a player control command?
-        bls.s       .playerCommand 
+        bhi.s       .compression 
+        bsr.b       .playerCommand
+        bsr.b       .writeBack
+        bra         .getNextNote
         ENDC 
 
+.compression:
         ; not a player command - compression ...
         ; compression lookback only at this time
         move.l      d1,d0
@@ -509,7 +517,7 @@ rc_Music1:
         ; command jumptable
         add.w       d1,d1                                       ;jumptable is words
         move.w      .cmdJumpTable(pc,d1.w),d1                   ;get offset from jumptable
-        jsr         .cmdJumpTable(pc,d1.w)
+        jmp         .cmdJumpTable(pc,d1.w)
 .nopCmd:
         rts
 
