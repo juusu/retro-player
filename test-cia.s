@@ -1,4 +1,8 @@
-opt_CIA = 1
+    xref        rc_Init
+	xref 		rc_Music
+	xref		rc_StopMusic
+
+;opt_CIA = 1
 	SECTION code,CODE_P
 
 	movem.l 	d0-d7/a0-a6,-(a7)
@@ -19,8 +23,6 @@ opt_CIA = 1
 
 	movem.l  (a7)+,d0-d7/a0-a6	
 	rts
-
-	INCLUDE "replay.s"
 
 	SECTION data,DATA_C
 
