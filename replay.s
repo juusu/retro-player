@@ -4,7 +4,7 @@
 ; ++ replay routine and it will back away ...                **
 ; *************************************************************
         ifnd            opt_USECODE
-opt_USECODE = 1
+opt_USECODE = -1
         endc
 
 bit_TEMPO = 0
@@ -530,6 +530,8 @@ rc_Music1:
         ENDC
         
         IFNE        opt_USECODE&1<<bit_SYNC
+        dc.w        .emitSync-.cmdJumpTable
+        ELSE
         dc.w        .nopCmd-.cmdJumpTable
         ; no need to pad the last command jumptable entry if not used, 
         ; as no other command will try to look past this spot in the 
@@ -561,7 +563,8 @@ rc_setTempo:
 .emitSync:
         move.b      d0,d1                                       ;d1 is value
         asr.w       #8,d0                                       ;d0 is channel
-        move.b      d1,rc_SyncBytes-rc_Vars(a1,d0.b)
+        andi.w      #$ff,d0
+        move.b      d1,rc_SyncBytes-rc_Vars(a1,d0.w)
         rts                                                     ;end
         endc                
 
