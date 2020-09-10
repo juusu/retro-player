@@ -517,20 +517,20 @@ rc_Music1:
         rts
 
 .cmdJumpTable:
-        IFNE        (opt_USECODE&1<<bit_TEMPO)&&opt_CIA
+        IFNE        (opt_USECODE&1<<bit_TEMPO)&opt_CIA
         dc.w        rc_setTempo-.cmdJumpTable
         ELSE
         dc.w        .nopCmd-.cmdJumpTable
         ENDC
         
         IFNE        opt_USECODE&1<<bit_FILTER        
-        dc.w        .setFilter-.cmdJumpTable
+        dc.w        rc_setFilter-.cmdJumpTable
         ELSE
         dc.w        .nopCmd-.cmdJumpTable
         ENDC
         
         IFNE        opt_USECODE&1<<bit_SYNC
-        dc.w        .emitSync-.cmdJumpTable
+        dc.w        rc_emitSync-.cmdJumpTable
         ELSE
         dc.w        .nopCmd-.cmdJumpTable
         ; no need to pad the last command jumptable entry if not used, 
@@ -556,11 +556,11 @@ rc_setTempo:
 
         endc
         ifne        opt_USECODE&1<<bit_FILTER
-.setFilter:
+rc_setFilter:
         rts                                                     ;end
         endc
         ifne        opt_USECODE&1<<bit_SYNC
-.emitSync:
+rc_emitSync:
         move.b      d0,d1                                       ;d1 is value
         asr.w       #8,d0                                       ;d0 is channel
         andi.w      #$ff,d0
