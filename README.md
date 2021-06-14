@@ -10,7 +10,7 @@ Theoretically, it should support converting from any music player which
 doesn't modify the sample data while the music is playing.
 
 At the moment, the only existing converter supports only ProTracker .MOD
-files, you can get it [here](https://github.com/juusu/retro-converter)
+files, you can get it [here](https://github.com/juusu/retro-convert)
 
 I have vague future plans for making converters from AHX, PreTracker and
 Future Composer files, time permitting. Any contributions in this regard
