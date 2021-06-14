@@ -37,10 +37,10 @@ player:
                 0 includes no optional features and will produce a
                 minimal player binary. 
 
-To use, first call rc_Init from your code with the address to the .RCM data in A0.
+To use, first call *rc_Init* from your code with the address to the .RCM data in A0.
 
-Then, for CIA mode, call rc_Music to start music playback, and call rc_StopMusic to stop.
+Then, for CIA mode, call *rc_Music* to start music playback, and call *rc_StopMusic* to stop.
 
-For VBlank mode, call rc_Music once every frame. Try to call it near to
+For VBlank mode, call *rc_Music* once every frame. Try to call it near to
 the top of the frame, because the raster wait code used is quite crude 
 and might hang if the line counter rolls over 255.
